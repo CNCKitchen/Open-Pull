@@ -3,7 +3,7 @@ This are all the files you need to build your own DIY Universal test machine.
 # Build one
 ## Hardware/CAD
 CAD files of the whole assembly are available as stl, step and Fusion360 files.
-###Bill of Materials (BOM)
+### Bill of Materials (BOM)
 2x NEMA 17 Stepper Motors 1.68A, Geared 14:1
 2x Trapezoidal Lead Screw 10x2 500mm
 2x Coupling 8/10mm
@@ -14,7 +14,7 @@ CAD files of the whole assembly are available as stl, step and Fusion360 files.
 
 ## Electronics
 Currently the electronics are only as schematics and as images. I'd be happy if anyone made a PCB design for it for easier use.
-###Bill of Materials (BOM)
+### Bill of Materials (BOM)
 1x Arduino Nano
 2x DRV8825 Stepper Motor Driver
 1x HX711 Load Cell Amplifier
