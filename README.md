@@ -11,19 +11,17 @@ CAD files of the whole assembly are available as stl, step and Fusion360 files.
 * 2x Trapezoidal Nut with Flange, Brass
 * 2x Angular Contact Bearing, 3200 2RS
 
-
 ## Electronics
 Currently the electronics are only as schematics and as images. I'd be happy if anyone made a PCB design for it for easier use.
 ### Bill of Materials (BOM)
 * 1x Arduino Nano
-* 2x DRV8825 Stepper Motor Driver
+* 2x A4988 Stepper Motor Driver
 * 1x HX711 Load Cell Amplifier
 * 1x 24V fan
 * 1x 5A 24V Power Supply
 * 1x Load Cell of suitable size (AEP TC4 - 5kN in my case)
 
-
 ## Software
 Software is currently only the Arduino code for the machine itself and very rudamentary and not optimized. Everything is controlled via the serial terminal.
-#Run one
+# Run one
 
