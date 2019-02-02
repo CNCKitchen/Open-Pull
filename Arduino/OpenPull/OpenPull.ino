@@ -1,11 +1,13 @@
-########################################
+/*########################################
 ##### OPEN PULL
 ##### DIY Universal Test Machnine
 ##### V1.0
 ##### Stefan Hermann aka CNC Kitchen
 ##### https://www.youtube.com/cnckitchen
 ##### 31.01.2019
-########################################
+##### Libraries:
+##### HX711 by aguegu: https://github.com/aguegu/ardulibs/tree/master/hx711
+########################################*/
 
 #include "hx711.h"
 
