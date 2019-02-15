@@ -1,7 +1,10 @@
 # Open-Pull
 These are all the files you need, to build your own DIY Universal test machine.
+
 __SUPPORT__ my work via [PATREON](https://www.patreon.com/cnckitchen) or [PayPal](https://www.paypal.me/CNCKitchen).
+
 Watch my YouTube video about it: https://youtu.be/rJ9XfXXidW4
+
 __DISCLAIMER__: This is no professional test equipment. I won't be responsible for any damage that occured to to the data you gathered with this machine. Only use with appropriate safety equipment!
 # Build one
 ## Hardware/CAD
