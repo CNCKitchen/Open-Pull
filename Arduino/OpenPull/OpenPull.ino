@@ -12,42 +12,39 @@
 #include "hx711.h"
 
 ////// Load Cell Variables
-float gainValue = -875.7*(1-0.001); //N
-float measuringIntervall = 2;
-float measuringIntervallTest = .5;
-float measuringIntervallTestFast = .15;
-float maxLoad = 3000;
+float gainValue = -875.7*(1-0.001); //CALIBRATION FACTOR
+float measuringIntervall = 2;       //Measuring interval when IDLE
+float measuringIntervallTest = .5;  //Measuring interval during SLOW test
+float measuringIntervallTestFast = .15; ///Measuring interval during FAST test
 
 long tareValue;
 
 Hx711 loadCell(A0,A1);
 
 ////// Stepper Variables
-int directionPin = 3;
-int stepPin = 2;
+
 int pulseLength = 10;
 float stepsPerMM = 200 * 2 * (13 + 212.0/289.0) / 2; // Steps per rev * Microstepping * Gear reduction ratio / Pitch
 float stepsPerSecond = stepsPerMM / 60; //1mm/min
-int slowSpeedDelay = 3000;
-int fastSpeedDelay = 300;
+int slowSpeedDelay = 3000;    //Time delay between steps for jogging slowly
+int fastSpeedDelay = 300;     ////Time delay between steps for jogging fast
 boolean dir = 0;
 
 
-////// AUX Variables
+////// PIN definitions
+int directionPin = 3;
+int stepPin = 2;
 int speedPin = 5;
 int upPin = 4;
 int downPin = 6;
 int led1Pin = 7;
 
-////// Calc
-float targetDelayBetweenSteps = 1000000/stepsPerSecond;
 
 ///// Variables
 byte mode = 2;
 byte modeAddition = 0;
-float currentSpeed = stepsPerSecond;
-float fastSpeed = 25 * stepsPerSecond;
-float currentPos = 0;
+float currentSpeed = stepsPerSecond;    //SLOW Test speed
+float fastSpeed = 25 * stepsPerSecond;  //FAST Test speed (x25 = 25mm/min)
 long currentMicros= micros();
 long lastLoadValue = 0;
 long lastStep = 0;
@@ -55,7 +52,7 @@ String inputString;
 float maxForce = 0;
 float loweringCounter = 0;
 long startTime = 0;
-long yMTestTime = 30 * 1000; //20s
+long yMTestTime = 30 * 1000; //Modulus Test time for SLOW speed (=30s)
 
 void setup() {
   // Serial
@@ -102,7 +99,7 @@ void loop() {
     String rest;
     taskPart = inputString.substring(0,inputString.indexOf(" "));
     rest = inputString.substring(inputString.indexOf(" ")+1);
-    if(taskPart == "M10") { //start Test
+    if(taskPart == "M10") { //Start SLOW test
       mode = 1;
       if(rest == "S1") {
         modeAddition = 1;
@@ -117,7 +114,7 @@ void loop() {
       Serial.println("");
       Serial.println("");
       Serial.println("Tare");
-      tareValue = loadCell.averageValue(32);
+      tareValue = loadCell.averageValue(32);    //Tare
       Serial.println("Start Test");
       digitalWrite(led1Pin,HIGH);
       delay(500);
@@ -126,7 +123,7 @@ void loop() {
       digitalWrite(led1Pin,HIGH);
       delay(500);
       digitalWrite(led1Pin,LOW);
-    } else if (taskPart == "M11") { //manual Mode      
+    } else if (taskPart == "M11") { //manual Mode (not implemented yet)      
       Serial.println("Manual Mode");
       measuringIntervall = 2;
       mode = 2;
@@ -156,7 +153,7 @@ void loop() {
       delay(500);
       digitalWrite(led1Pin,LOW);
       startTime = millis();
-    } else if(taskPart == "M14") { //start fast Test
+    } else if(taskPart == "M14") { //Start FAST test
       mode = 3;
       measuringIntervall = measuringIntervallTestFast;
       maxForce = 0;
@@ -190,7 +187,7 @@ void loop() {
       digitalWrite(stepPin, LOW);
       lastStep = currentMicros;      
     }
-    if(!digitalRead(downPin)) {
+    if(!digitalRead(downPin)) { //Stop test if DOWN Button is pressed
       Serial.println("Test aborted - entering manual mode");
       Serial.println("");
       Serial.println("");
