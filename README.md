@@ -1,3 +1,4 @@
+__WORK IN PROGRESS__
 # Open-Pull
 These are all the files you need, to build your own DIY Universal test machine.
 
@@ -5,7 +6,7 @@ __SUPPORT__ my work via [PATREON](https://www.patreon.com/cnckitchen) or [PayPal
 
 Watch my YouTube video about it: https://youtu.be/rJ9XfXXidW4
 
-__DISCLAIMER__: This is no professional test equipment. I won't be responsible for any damage that occured to to the data you gathered with this machine. Only use with appropriate safety equipment!
+__DISCLAIMER__: This is no professional test equipment. I won't be responsible for any damage that occured due to the data you gathered with this machine. Only use with appropriate safety equipment!
 # Build one
 ## Hardware/CAD
 CAD files of the whole assembly are available as stl, step and Fusion360 files.
