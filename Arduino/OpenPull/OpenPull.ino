@@ -53,6 +53,7 @@ float maxForce = 0;
 float loweringCounter = 0;
 long startTime = 0;
 long yMTestTime = 30 * 1000; //Modulus Test time for SLOW speed (=30s)
+bool debug = false; //debug mode to test the remote
 
 void setup() {
   // Serial
@@ -192,11 +193,11 @@ void loop() {
     if (!digitalRead(upPin)) {
       digitalWrite(directionPin, LOW);
       performStep = 1;
-      //Serial.println("UP");
+      if(debug){ Serial.println("UP"); }
     } else if (!digitalRead(downPin)) {
       digitalWrite(directionPin, HIGH);
       performStep = 1;
-      //Serial.println("DOWN");
+      if(debug){ Serial.println("DOWN"); }
     }
     //Perform Step
     if (performStep) {
@@ -206,10 +207,10 @@ void loop() {
     }
     if (digitalRead(speedPin)) {
       delayMicroseconds(slowSpeedDelay);
-      //Serial.println("Slow Step");
+      if(debug){Serial.println("Slow Speed");}
     } else {
       delayMicroseconds(fastSpeedDelay);
-      //Serial.println("Fast Step");
+      if(debug){Serial.println("Fast Speed");}
     }
 
     // Fast Test Mode
