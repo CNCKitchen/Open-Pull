@@ -34,6 +34,9 @@ Currently the electronics are only as schematics and as images. I'd be happy if 
 
 ## Software
 Software is currently only the Arduino code for the machine itself, very rudamentary and not optimized. Everything is controlled via the serial terminal.
+
+__UPDATE__: OpenPull Web-Controller(by Iqwertz): https://github.com/Iqwertz/OpenPull-Web-Controller
+
 The general functionality is explained in this video: https://youtu.be/uvn-J8CbtzM
 # Commands
 * __M10__: Slow test (1mm/min)
