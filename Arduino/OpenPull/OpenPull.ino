@@ -12,10 +12,10 @@
 #include "hx711.h"
 
 ////// Load Cell Variables
-float gainValue = -875.7 * (1 - 0.001); //CALIBRATION FACTOR
-float measuringIntervall = 2;       //Measuring interval when IDLE
-float measuringIntervallTest = .5;  //Measuring interval during SLOW test
-float measuringIntervallTestFast = .15; ///Measuring interval during FAST test
+const float gainValue = -875.7 * (1 - 0.001); //CALIBRATION FACTOR
+float measuringInterval = 2;       //Measuring interval when IDLE
+const float measuringIntervalTest = .5;  //Measuring interval during SLOW test
+const float measuringIntervalTestFast = .15; ///Measuring interval during FAST test
 
 long tareValue;
 
@@ -23,28 +23,27 @@ Hx711 loadCell(A0, A1);
 
 ////// Stepper Variables
 
-int pulseLength = 10;
-float stepsPerMM = 200 * 2 * (13 + 212.0 / 289.0) / 2; // Steps per rev * Microstepping * Gear reduction ratio / Pitch
-float stepsPerSecond = stepsPerMM / 60; //1mm/min
-int slowSpeedDelay = 3000;    //Time delay between steps for jogging slowly
-int fastSpeedDelay = 300;     ////Time delay between steps for jogging fast
-boolean dir = 0;
+const int pulseLength = 10;
+const float stepsPerMM = 200 * 2 * (13 + 212.0 / 289.0) / 2; // Steps per rev * Microstepping * Gear reduction ratio / Pitch
+const float stepsPerSecond = stepsPerMM / 60; //1mm/min
+const int slowSpeedDelay = 3000;    //Time delay between steps for jogging slowly
+const int fastSpeedDelay = 300;     ////Time delay between steps for jogging fast
 
 
 ////// PIN definitions
-int directionPin = 3;
-int stepPin = 2;
-int speedPin = 5;
-int upPin = 4;
-int downPin = 6;
-int led1Pin = 7;
+const int directionPin = 3;
+const int stepPin = 2;
+const int speedPin = 5;
+const int upPin = 4;
+const int downPin = 6;
+const int led1Pin = 7;
 
 
 ///// Variables
 byte mode = 2;
 byte modeAddition = 0;
 float currentSpeed = stepsPerSecond;    //SLOW Test speed
-float fastSpeed = 25 * stepsPerSecond;  //FAST Test speed (x25 = 25mm/min)
+const float fastSpeed = 25 * stepsPerSecond;  //FAST Test speed (x25 = 25mm/min)
 long currentMicros = micros();
 long lastLoadValue = 0;
 long lastStep = 0;
@@ -52,8 +51,8 @@ String inputString;
 float maxForce = 0;
 float loweringCounter = 0;
 long startTime = 0;
-long yMTestTime = 30 * 1000; //Modulus Test time for SLOW speed (=30s)
-bool debug = false; //debug mode to test the remote
+const long yMTestTime = 30 * 1000; //Modulus Test time for SLOW speed (=30s)
+const bool debug = false; //debug mode to test the remote
 
 void setup() {
   // Serial
@@ -65,7 +64,7 @@ void setup() {
   // Stepper
   pinMode(directionPin, OUTPUT);
   pinMode(stepPin, OUTPUT);
-  digitalWrite(directionPin, dir);
+  digitalWrite(directionPin, LOW);
   digitalWrite(stepPin, LOW);
 
   //Up Button
@@ -88,7 +87,7 @@ void setup() {
 
 void loop() {
   int stringRead = 0;
-  //Serial COmmunication
+  //Serial Communication
   inputString = "";
   while (Serial.available())
   {
@@ -105,12 +104,11 @@ void loop() {
       if (rest == "S1") {
         modeAddition = 1;
       }
-      measuringIntervall = measuringIntervallTest;
+      measuringInterval = measuringIntervalTest;
       maxForce = 0;
       loweringCounter = 0;
       digitalWrite(directionPin, LOW);
-      printSpaces(5);
-      Serial.println("Tare");
+      Serial.println("\n\n\n\n\nTare");
       tareValue = loadCell.averageValue(32);    //Tare
       Serial.println("Start Test");
       digitalWrite(led1Pin, HIGH);
@@ -122,20 +120,19 @@ void loop() {
       digitalWrite(led1Pin, LOW);
     } else if (taskPart == "M11") { //manual Mode (not implemented yet)
       Serial.println("Manual Mode");
-      measuringIntervall = 2;
+      measuringInterval = 2;
       mode = 2;
     } else if (taskPart == "M12") { //tare
-      measuringIntervall = 2;
+      measuringInterval = 2;
       Serial.println("Tare");
       tareValue = loadCell.averageValue(32);
     } else if (taskPart == "M13") { //Youngs Modulus Test Mode
       mode = 4;
-      measuringIntervall = measuringIntervallTest;
+      measuringInterval = measuringIntervalTest;
       maxForce = 0;
       loweringCounter = 0;
       digitalWrite(directionPin, LOW);
-      printSpaces(5);
-      Serial.println("Tare");
+      Serial.println("\n\n\n\n\nTare");
       tareValue = loadCell.averageValue(32);
       Serial.println("Start Test");
       digitalWrite(led1Pin, HIGH);
@@ -148,12 +145,11 @@ void loop() {
       startTime = millis();
     } else if (taskPart == "M14") { //Start FAST test
       mode = 3;
-      measuringIntervall = measuringIntervallTestFast;
+      measuringInterval = measuringIntervalTestFast;
       maxForce = 0;
       loweringCounter = 0;
       digitalWrite(directionPin, LOW);
-      printSpaces(5);
-      Serial.println("Tare");
+      Serial.println("\n\n\n\n\nTare");
       tareValue = loadCell.averageValue(32);
       Serial.println("Start Fast Test");
       digitalWrite(led1Pin, HIGH);
@@ -177,11 +173,10 @@ void loop() {
       lastStep = currentMicros;
     }
     if (!digitalRead(downPin)) { //Stop test if DOWN Button is pressed
-      Serial.println("Test aborted - entering manual mode");
-      printSpaces(5);
+      Serial.println("Test aborted - entering manual mode\n\n\n\n\n");
       mode = 2;
       modeAddition = 0;
-      measuringIntervall = 2;
+      measuringInterval = 2;
       currentSpeed = stepsPerSecond;
     }
 
@@ -223,11 +218,10 @@ void loop() {
       lastStep = currentMicros;
     }
     if (!digitalRead(downPin)) {
-      Serial.println("Test aborted - entering manual mode");
-      printSpaces(5);
+      Serial.println("Test aborted - entering manual mode\n\n\n\n\n");
       mode = 2;
       modeAddition = 0;
-      measuringIntervall = 2;
+      measuringInterval = 2;
       currentSpeed = stepsPerSecond;
     }
     // Youngs Modulus Test
@@ -241,14 +235,13 @@ void loop() {
     }
     if (millis() - startTime >= yMTestTime) {
       mode = 3;
-      measuringIntervall = measuringIntervallTestFast;
+      measuringInterval = measuringIntervalTestFast;
     }
     if (!digitalRead(downPin)) {
-      Serial.println("Test aborted - entering manual mode");
-      printSpaces(5);
+      Serial.println("Test aborted - entering manual mode\n\n\n\n\n");
       mode = 2;
       modeAddition = 0;
-      measuringIntervall = 2;
+      measuringInterval = 2;
       currentSpeed = stepsPerSecond;
     }
   }
@@ -256,7 +249,7 @@ void loop() {
 
   ///////////// Get load value
   currentMicros = micros();
-  if ((micros() - lastLoadValue) >= measuringIntervall * 1000000) {
+  if ((micros() - lastLoadValue) >= measuringInterval * 1000000) {
     digitalWrite(led1Pin, HIGH);
     float loadValue = (loadCell.averageValue(1) - tareValue) / gainValue;
     Serial.println(loadValue);
@@ -275,11 +268,5 @@ void loop() {
         modeAddition = 0;
       }
     }
-  }
-}
-
-void printSpaces(int numberOfSpaces) { //This function will print a given amount of empty lines
-  for (int i = numberOfSpaces; i > 0; i--) {
-    Serial.println("");
   }
 }
