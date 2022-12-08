@@ -33,7 +33,7 @@ Currently the electronics are only as schematics and as images. I'd be happy if 
 * ...
 
 ## Software
-Software is currently only the Arduino code for the machine itself, very rudamentary and not optimized. Everything is controlled via the serial terminal.
+Software is currently only the Arduino code for the machine itself, very rudimentary and not optimized. Everything is controlled via the serial terminal.
 
 __UPDATE__: OpenPull Web-Controller(by Iqwertz): https://github.com/Iqwertz/OpenPull-Web-Controller
 
@@ -46,5 +46,5 @@ The general functionality is explained in this video: https://youtu.be/uvn-J8Cbt
 # Evaluation
 The data is currently analyzed via [EXCEL sheets](Documents/DataAnalysis.xlsx).
 
-The strain data is captures via an optical extensometer using a standard camera. I explain the procedure in my video, the tracking marker export script can be found in [Documents](Documents).
+The strain data is captured via an optical extensometer using a standard camera. I explain the procedure in my video, the tracking marker export script can be found in [Documents](Documents).
 
