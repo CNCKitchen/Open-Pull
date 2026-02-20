@@ -1,4 +1,5 @@
 const connectBtn = document.getElementById('connectBtn');
+const emergencyStopBtn = document.getElementById('emergencyStopBtn');
 const connectionState = document.getElementById('connectionState');
 const statusLine = document.getElementById('statusLine');
 
@@ -12,6 +13,9 @@ const testTypeEl = document.getElementById('testType');
 const speedInputEl = document.getElementById('speedInput');
 const widthInputEl = document.getElementById('widthInput');
 const heightInputEl = document.getElementById('heightInput');
+const diameterInputEl = document.getElementById('diameterInput');
+const diameterRowEl = document.getElementById('diameterRow');
+const stressCardEl = document.getElementById('stressCard');
 const sampleNameEl = document.getElementById('sampleName');
 const gainInputEl = document.getElementById('gainInput');
 
@@ -37,6 +41,24 @@ let samples = [];
 let maxLoad = 0;
 let maxStress = 0;
 
+function resizeCanvasToDisplaySize() {
+  const rect = canvas.getBoundingClientRect();
+  const dpr = window.devicePixelRatio || 1;
+
+  const displayWidth = Math.max(1, Math.floor(rect.width));
+  const displayHeight = Math.max(1, Math.floor(rect.height));
+  const bufferWidth = Math.floor(displayWidth * dpr);
+  const bufferHeight = Math.floor(displayHeight * dpr);
+
+  if (canvas.width !== bufferWidth || canvas.height !== bufferHeight) {
+    canvas.width = bufferWidth;
+    canvas.height = bufferHeight;
+  }
+
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  return { width: displayWidth, height: displayHeight };
+}
+
 function setStatus(text) {
   statusLine.textContent = `STATUS: ${text}`;
 }
@@ -56,10 +78,23 @@ function setConnectionBadge(connected) {
 }
 
 function formatNum(value, digits = 3) {
-  return Number.isFinite(value) ? value.toFixed(digits) : '0.000';
+  return Number.isFinite(value) ? value.toFixed(digits) : (0).toFixed(digits);
 }
 
 function getAreaMm2() {
+  if (testTypeEl.value === 'load') {
+    return null;
+  }
+
+  if (testTypeEl.value === 'cylindrical') {
+    const diameter = parseFloat(diameterInputEl.value);
+    if (!Number.isFinite(diameter) || diameter <= 0) {
+      return null;
+    }
+    const radius = diameter / 2;
+    return Math.PI * radius * radius;
+  }
+
   const width = parseFloat(widthInputEl.value);
   const height = parseFloat(heightInputEl.value);
   if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) {
@@ -68,18 +103,71 @@ function getAreaMm2() {
   return width * height;
 }
 
+function recomputeMaxStress() {
+  const area = getAreaMm2();
+  if (!area || testTypeEl.value === 'load') {
+    maxStress = 0;
+    return;
+  }
+  maxStress = samples.reduce((highest, sample) => {
+    const stress = sample.loadN / area;
+    return stress > highest ? stress : highest;
+  }, 0);
+}
+
+function updateStressDisplay(stress) {
+  if (testTypeEl.value === 'load') {
+    currentStressEl.textContent = '--.- MPa';
+    maxStressEl.textContent = '--.- MPa';
+    stressCardEl.classList.add('disabled');
+    return;
+  }
+
+  stressCardEl.classList.remove('disabled');
+  currentStressEl.textContent = `${formatNum(stress, 1)} MPa`;
+  maxStressEl.textContent = `${formatNum(maxStress, 1)} MPa`;
+}
+
+function refreshMetricsFromLatestSample() {
+  const latest = samples[samples.length - 1];
+  if (!latest) {
+    updateMetrics(0, 0);
+    return;
+  }
+  updateMetrics(latest.loadN, latest.displacementMm);
+}
+
+function applyTestTypeUiState() {
+  const isCylindrical = testTypeEl.value === 'cylindrical';
+  const isLoad = testTypeEl.value === 'load';
+
+  const widthRow = widthInputEl.closest('.inline-input');
+  const heightRow = heightInputEl.closest('.inline-input');
+  const diameterRow = diameterInputEl.closest('.inline-input');
+
+  widthInputEl.disabled = isCylindrical || isLoad;
+  heightInputEl.disabled = isCylindrical || isLoad;
+  diameterInputEl.disabled = !isCylindrical;
+
+  widthRow.classList.toggle('disabled', widthInputEl.disabled);
+  heightRow.classList.toggle('disabled', heightInputEl.disabled);
+  diameterRow.classList.toggle('disabled', diameterInputEl.disabled);
+
+  recomputeMaxStress();
+  refreshMetricsFromLatestSample();
+}
+
 function updateMetrics(loadN, dispMm) {
   const area = getAreaMm2();
   const stress = area ? loadN / area : 0;
 
   if (loadN > maxLoad) maxLoad = loadN;
-  if (stress > maxStress) maxStress = stress;
+  if (testTypeEl.value !== 'load' && stress > maxStress) maxStress = stress;
 
-  currentLoadEl.textContent = `${formatNum(loadN, 2)} N`;
-  maxLoadEl.textContent = `${formatNum(maxLoad, 2)} N`;
-  currentDispEl.textContent = `${formatNum(dispMm, 3)} mm`;
-  currentStressEl.textContent = `${formatNum(stress, 3)} MPa`;
-  maxStressEl.textContent = `${formatNum(maxStress, 3)} MPa`;
+  currentLoadEl.textContent = `${formatNum(loadN, 0)} N`;
+  maxLoadEl.textContent = `${formatNum(maxLoad, 0)} N`;
+  currentDispEl.textContent = `${formatNum(dispMm, 2)} mm`;
+  updateStressDisplay(stress);
 }
 
 function resetTestData() {
@@ -91,8 +179,7 @@ function resetTestData() {
 }
 
 function renderChart() {
-  const width = canvas.width;
-  const height = canvas.height;
+  const { width, height } = resizeCanvasToDisplaySize();
 
   ctx.clearRect(0, 0, width, height);
   ctx.fillStyle = '#121b2c';
@@ -107,7 +194,7 @@ function renderChart() {
   ctx.strokeRect(margin, margin, plotW, plotH);
 
   ctx.fillStyle = '#8ea7d6';
-  ctx.font = '14px Arial';
+  ctx.font = '14px "Segoe UI", Arial, sans-serif';
   ctx.fillText('Force (N)', 10, margin - 8);
   ctx.fillText('Time (s)', width - 90, height - 12);
 
@@ -301,18 +388,16 @@ newTestBtn.addEventListener('click', async () => {
 startTestBtn.addEventListener('click', async () => {
   const speed = parseFloat(speedInputEl.value);
   const safeSpeed = Number.isFinite(speed) && speed > 0 ? speed : 1.0;
-  const selected = testTypeEl.value;
+  const roundedSpeed = Number(safeSpeed.toFixed(1));
+  speedInputEl.value = roundedSpeed.toFixed(1);
 
-  if (selected === 'slow') {
-    await sendCommand(`M40 ${safeSpeed.toFixed(3)}`);
-    await sendCommand('M10');
-  } else if (selected === 'fast') {
-    await sendCommand(`M41 ${safeSpeed.toFixed(3)}`);
-    await sendCommand('M14');
-  } else {
-    await sendCommand(`M40 ${safeSpeed.toFixed(3)}`);
-    await sendCommand('M13');
-  }
+  await sendCommand(`M40 ${roundedSpeed.toFixed(1)}`);
+  await sendCommand('M10');
+});
+
+emergencyStopBtn.addEventListener('click', async () => {
+  await sendCommand('M11');
+  setStatus('emergency_stop');
 });
 
 tareBtn.addEventListener('click', async () => {
@@ -327,14 +412,34 @@ gotoZeroBtn.addEventListener('click', async () => {
   await sendCommand('M21');
 });
 
-setGainBtn.addEventListener('click', async () => {
-  const gain = parseFloat(gainInputEl.value);
-  if (!Number.isFinite(gain) || gain === 0) {
-    setStatus('invalid_gain');
-    return;
-  }
-  await sendCommand(`M43 ${gain}`);
+if (setGainBtn && gainInputEl) {
+  setGainBtn.addEventListener('click', async () => {
+    const gain = parseFloat(gainInputEl.value);
+    if (!Number.isFinite(gain) || gain === 0) {
+      setStatus('invalid_gain');
+      return;
+    }
+    await sendCommand(`M43 ${gain}`);
+  });
+}
+
+testTypeEl.addEventListener('change', applyTestTypeUiState);
+widthInputEl.addEventListener('input', () => {
+  recomputeMaxStress();
+  refreshMetricsFromLatestSample();
 });
+heightInputEl.addEventListener('input', () => {
+  recomputeMaxStress();
+  refreshMetricsFromLatestSample();
+});
+if (diameterInputEl) {
+  diameterInputEl.addEventListener('input', () => {
+    recomputeMaxStress();
+    refreshMetricsFromLatestSample();
+  });
+}
+
+window.addEventListener('resize', renderChart);
 
 exportBtn.addEventListener('click', () => {
   if (samples.length === 0) {
@@ -382,4 +487,5 @@ exportBtn.addEventListener('click', () => {
 resetTestData();
 setConnectionBadge(false);
 setStatus('ready');
+applyTestTypeUiState();
 renderChart();

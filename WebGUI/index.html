@@ -14,6 +14,7 @@
         <span>Tensile Tester Console</span>
       </div>
       <div class="top-actions">
+        <button id="emergencyStopBtn" class="btn danger">EMERGENCY STOP</button>
         <button id="connectBtn" class="btn">Connect</button>
         <span id="connectionState" class="badge">Disconnected</span>
       </div>
@@ -22,38 +23,39 @@
     <main class="layout">
       <section class="left-panel">
         <label class="section-label">Current Load</label>
-        <div class="big-metric" id="currentLoad">0.00 N</div>
+        <div class="big-metric" id="currentLoad">0 N</div>
 
         <label class="section-label">Max Load</label>
-        <div class="small-metric" id="maxLoad">0.00 N</div>
+        <div class="small-metric" id="maxLoad">0 N</div>
 
+        <label class="section-label">Sample Type</label>
         <select id="testType" class="input full">
-          <option value="slow">Slow Test</option>
-          <option value="fast">Fast Test</option>
-          <option value="youngs">Youngs Modulus</option>
+          <option value="rectangular">Rectangular Sample</option>
+          <option value="cylindrical">Cylindical Sample</option>
+          <option value="load">Load Test</option>
         </select>
 
-        <div class="inline-input">
-          <input id="speedInput" class="input" type="number" step="0.01" value="1.00" />
+        <div class="inline-input short-input">
+          <input id="speedInput" class="input" type="number" step="0.1" value="1.0" />
           <span>mm/min Speed</span>
         </div>
 
-        <div class="inline-input">
+        <div class="inline-input short-input">
           <input id="widthInput" class="input" type="number" step="0.01" value="10.00" />
           <span>mm Width</span>
         </div>
 
-        <div class="inline-input">
+        <div class="inline-input short-input">
           <input id="heightInput" class="input" type="number" step="0.01" value="2.00" />
           <span>mm Height</span>
         </div>
 
-        <input id="sampleName" class="input full" placeholder="Sample Name" />
-
-        <div class="inline-input">
-          <input id="gainInput" class="input" type="number" step="0.1" placeholder="-875.7" />
-          <button id="setGainBtn" class="btn mini">Set Gain</button>
+        <div class="inline-input short-input" id="diameterRow">
+          <input id="diameterInput" class="input" type="number" step="0.01" value="5.00" />
+          <span>mm Diameter</span>
         </div>
+
+        <input id="sampleName" class="input full" placeholder="Sample Name" />
 
         <button id="newTestBtn" class="btn full">New Test</button>
         <button id="startTestBtn" class="btn full strong">START TEST</button>
@@ -65,19 +67,27 @@
         </div>
 
         <button id="exportBtn" class="btn full">Export</button>
+
+        <details class="config-section">
+          <summary>Configuration</summary>
+          <div class="inline-input">
+            <input id="gainInput" class="input" type="number" step="0.1" placeholder="-875.7" />
+            <button id="setGainBtn" class="btn mini">Set Gain</button>
+          </div>
+        </details>
       </section>
 
       <section class="main-panel">
         <div class="metrics-grid">
           <div class="metric-card">
             <label class="section-label">Current Displacement</label>
-            <div class="big-metric" id="currentDisp">0.000 mm</div>
+            <div class="big-metric" id="currentDisp">0.00 mm</div>
           </div>
-          <div class="metric-card">
+          <div class="metric-card" id="stressCard">
             <label class="section-label">Current Stress</label>
-            <div class="big-metric" id="currentStress">0.000 MPa</div>
+            <div class="big-metric" id="currentStress">0.0 MPa</div>
             <label class="section-label">Max Stress</label>
-            <div class="small-metric" id="maxStress">0.000 MPa</div>
+            <div class="small-metric" id="maxStress">0.0 MPa</div>
           </div>
         </div>
 
