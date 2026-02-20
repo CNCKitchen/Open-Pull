@@ -33,16 +33,52 @@ Currently the electronics are only as schematics and as images. I'd be happy if 
 * ...
 
 ## Software
-Software is currently only the Arduino code for the machine itself, very rudamentary and not optimized. Everything is controlled via the serial terminal.
+The firmware in `Arduino/OpenPull/OpenPull.ino` now uses non-blocking serial handling, timer-driven step generation, and acceleration/deceleration ramps for smoother motion.
+
+Everything can still be controlled from a serial terminal, and a browser GUI is now included in `WebGUI`.
 
 __UPDATE__: OpenPull Web-Controller(by Iqwertz): https://github.com/Iqwertz/OpenPull-Web-Controller
 
 The general functionality is explained in this video: https://youtu.be/uvn-J8CbtzM
 # Commands
-* __M10__: Slow test (1mm/min)
+* __M10__ `[S1]`: Slow test (default 1mm/min). Optional `S1` enables break-detection speedup.
+* __M11__: Manual mode (stop test motion and return to jog mode)
 * __M12__: Tare
 * __M13__: Modulus test - 1mm/min for 30s, then 25mm/min
-* __M14__: Fast test (25mm/min)
+* __M14__: Fast test (default 25mm/min)
+* __M20__: Set displacement zero at current position
+* __M21__: Go to displacement zero
+* __M40__ `<mm_per_min>`: Set slow test speed
+* __M41__ `<mm_per_min>`: Set fast test speed
+* __M42__ `<mm_per_s2>`: Set acceleration/deceleration
+* __M43__ `<gain>`: Set load-cell gain factor
+
+# Serial Data Protocol
+The firmware emits line-based tagged CSV records:
+
+* `DATA,<timestamp_ms>,<load_N>,<step_position>,<displacement_mm>,<mode>,<speed_steps_per_s>`
+* `STATUS,<timestamp_ms>,<code>,<message>`
+* `ACK,<timestamp_ms>,<command>,<message>`
+
+This format is designed to be robust for GUI parsing and CSV logging.
+
+# Browser GUI
+A browser-based controller is included in `WebGUI`:
+
+* Connect/disconnect over Web Serial
+* Start slow/fast/Young's tests
+* Live force-time chart
+* Current/max load, displacement, and stress
+* Tare, set zero, go to zero, and gain calibration control
+* CSV export of recorded samples
+
+## Running the GUI
+Use a Chromium-based browser (Chrome/Edge) with Web Serial support.
+
+1. Open `WebGUI/index.html` in the browser (or serve the repo locally via a simple HTTP server).
+2. Click **Connect** and select the Open-Pull serial port.
+3. Configure test type/speed/specimen dimensions and click **START TEST**.
+4. Export data with **Export**.
 # Evaluation
 The data is currently analyzed via [EXCEL sheets](Documents/DataAnalysis.xlsx).
 

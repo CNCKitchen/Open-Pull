@@ -1,285 +1,459 @@
 /*########################################
   ##### OPEN PULL
-  ##### DIY Universal Test Machnine
-  ##### V1.0
+  ##### DIY Universal Test Machine
+  ##### V2.0 (non-blocking + ramped motion)
   ##### Stefan Hermann aka CNC Kitchen
   ##### https://www.youtube.com/cnckitchen
-  ##### 31.01.2019
   ##### Libraries:
   ##### HX711 by aguegu: https://github.com/aguegu/ardulibs/tree/master/hx711
   ########################################*/
 
 #include "hx711.h"
+#include <string.h>
+#include <stdlib.h>
 
 ////// Load Cell Variables
-float gainValue = -875.7 * (1 - 0.001); //CALIBRATION FACTOR
-float measuringIntervall = 2;       //Measuring interval when IDLE
-float measuringIntervallTest = .5;  //Measuring interval during SLOW test
-float measuringIntervallTestFast = .15; ///Measuring interval during FAST test
-
-long tareValue;
-
+float gainValue = -875.7f * (1.0f - 0.001f); // CALIBRATION FACTOR
+long tareValue = 0;
 Hx711 loadCell(A0, A1);
 
-////// Stepper Variables
+////// Stepper / Kinematics
+const uint8_t directionPin = 3;
+const uint8_t stepPin = 2;
+const uint8_t speedPin = 5;
+const uint8_t upPin = 4;
+const uint8_t downPin = 6;
+const uint8_t led1Pin = 7;
 
-int pulseLength = 10;
-float stepsPerMM = 200 * 2 * (13 + 212.0 / 289.0) / 2; // Steps per rev * Microstepping * Gear reduction ratio / Pitch
-float stepsPerSecond = stepsPerMM / 60; //1mm/min
-int slowSpeedDelay = 3000;    //Time delay between steps for jogging slowly
-int fastSpeedDelay = 300;     ////Time delay between steps for jogging fast
-boolean dir = 0;
+const float stepsPerMM = 200.0f * 2.0f * (13.0f + 212.0f / 289.0f) / 2.0f; // Steps per rev * Microstepping * Gear reduction / Pitch
+const float baseTestSpeedSps = stepsPerMM / 60.0f; // 1 mm/min
 
+// Legacy jog delays mapped to SPS to preserve feel
+const float jogSlowSps = 1000000.0f / 3000.0f;
+const float jogFastSps = 1000000.0f / 300.0f;
 
-////// PIN definitions
-int directionPin = 3;
-int stepPin = 2;
-int speedPin = 5;
-int upPin = 4;
-int downPin = 6;
-int led1Pin = 7;
+// Motion profile defaults
+float slowTestSps = baseTestSpeedSps;
+float fastTestSps = 25.0f * baseTestSpeedSps; // 25 mm/min
+float accelSps2 = 800.0f;
+float gotoZeroSps = 8.0f * baseTestSpeedSps;
 
+// Timing
+const unsigned long yMTestTimeMs = 30000UL;
+const unsigned long accelUpdateIntervalUs = 5000UL;
+const unsigned long sampleIntervalUs = 12500UL; // target 80 Hz stream
 
-///// Variables
-byte mode = 2;
+// Mode definitions
+const byte MODE_TEST_SLOW = 1;
+const byte MODE_MANUAL = 2;
+const byte MODE_TEST_FAST = 3;
+const byte MODE_YOUNGS = 4;
+const byte MODE_GOTO_ZERO = 5;
+
+volatile bool motionEnabled = false;
+volatile bool stepDirLow = true;
+volatile long stepPosition = 0;
+volatile uint16_t stepIntervalTicks = 4000; // 2000us default @ prescaler 8 (0.5us/tick)
+
+byte mode = MODE_MANUAL;
 byte modeAddition = 0;
-float currentSpeed = stepsPerSecond;    //SLOW Test speed
-float fastSpeed = 25 * stepsPerSecond;  //FAST Test speed (x25 = 25mm/min)
-long currentMicros = micros();
-long lastLoadValue = 0;
-long lastStep = 0;
-String inputString;
-float maxForce = 0;
-float loweringCounter = 0;
-long startTime = 0;
-long yMTestTime = 30 * 1000; //Modulus Test time for SLOW speed (=30s)
-bool debug = false; //debug mode to test the remote
+
+float targetSpeedSps = 0.0f;
+float currentSpeedSps = 0.0f;
+float maxForce = 0.0f;
+float loweringCounter = 0.0f;
+long zeroStepOffset = 0;
+unsigned long startTimeMs = 0;
+unsigned long lastSampleUs = 0;
+unsigned long lastAccelUpdateUs = 0;
+bool debug = false;
+
+char serialLine[96];
+uint8_t serialLineIndex = 0;
+
+void setupTimer1();
+void setDirectionLow(bool low);
+void setStepIntervalFromSpeed(float speedSps);
+void setMotionEnabled(bool enabled);
+void enterManualMode();
+void emitStatus(const char *code, const char *message);
+void emitAck(const char *command, const char *message);
+void processSerial();
+void processCommand(char *line);
+void updateModeAndTargets();
+void updateAcceleration();
+void sampleAndStream();
+float getDisplacementMm();
+void performTare();
+
+ISR(TIMER1_COMPA_vect) {
+  if (!motionEnabled) {
+    return;
+  }
+  digitalWrite(stepPin, HIGH);
+  digitalWrite(stepPin, LOW);
+  if (stepDirLow) {
+    stepPosition++;
+  } else {
+    stepPosition--;
+  }
+}
 
 void setup() {
-  // Serial
   Serial.begin(115200);
 
-  // Load Cell
-  tareValue = loadCell.averageValue(32);
-
-  // Stepper
   pinMode(directionPin, OUTPUT);
   pinMode(stepPin, OUTPUT);
-  digitalWrite(directionPin, dir);
+  digitalWrite(directionPin, LOW);
   digitalWrite(stepPin, LOW);
 
-  //Up Button
   pinMode(upPin, INPUT);
   digitalWrite(upPin, HIGH);
 
-  //Down Button
   pinMode(downPin, INPUT);
   digitalWrite(downPin, HIGH);
 
-  //Speed Switch
   pinMode(speedPin, INPUT);
   digitalWrite(speedPin, HIGH);
 
-  //LED Pin
   pinMode(led1Pin, OUTPUT);
   digitalWrite(led1Pin, LOW);
 
+  setupTimer1();
+  performTare();
+  lastAccelUpdateUs = micros();
+  lastSampleUs = micros();
+  emitStatus("BOOT", "ready");
 }
 
 void loop() {
-  int stringRead = 0;
-  //Serial COmmunication
-  inputString = "";
-  while (Serial.available())
-  {
-    inputString = Serial.readString();
-    stringRead = 1;
+  processSerial();
+  updateModeAndTargets();
+  updateAcceleration();
+  sampleAndStream();
+}
+
+void setupTimer1() {
+  noInterrupts();
+  TCCR1A = 0;
+  TCCR1B = 0;
+  TCNT1 = 0;
+  OCR1A = stepIntervalTicks;
+  TCCR1B |= (1 << WGM12);  // CTC
+  TCCR1B |= (1 << CS11);   // prescaler 8 => 0.5us per tick
+  TIMSK1 |= (1 << OCIE1A); // compare interrupt
+  interrupts();
+}
+
+void setDirectionLow(bool low) {
+  digitalWrite(directionPin, low ? LOW : HIGH);
+  noInterrupts();
+  stepDirLow = low;
+  interrupts();
+}
+
+void setStepIntervalFromSpeed(float speedSps) {
+  if (speedSps < 0.1f) {
+    speedSps = 0.1f;
   }
-  if (stringRead == 1) {
-    String taskPart;
-    String rest;
-    taskPart = inputString.substring(0, inputString.indexOf(" "));
-    rest = inputString.substring(inputString.indexOf(" ") + 1);
-    if (taskPart == "M10") { //Start SLOW test
-      mode = 1;
-      if (rest == "S1") {
-        modeAddition = 1;
-      }
-      measuringIntervall = measuringIntervallTest;
-      maxForce = 0;
-      loweringCounter = 0;
-      digitalWrite(directionPin, LOW);
-      printSpaces(5);
-      Serial.println("Tare");
-      tareValue = loadCell.averageValue(32);    //Tare
-      Serial.println("Start Test");
-      digitalWrite(led1Pin, HIGH);
-      delay(500);
-      digitalWrite(led1Pin, LOW);
-      delay(200);
-      digitalWrite(led1Pin, HIGH);
-      delay(500);
-      digitalWrite(led1Pin, LOW);
-    } else if (taskPart == "M11") { //manual Mode (not implemented yet)
-      Serial.println("Manual Mode");
-      measuringIntervall = 2;
-      mode = 2;
-    } else if (taskPart == "M12") { //tare
-      measuringIntervall = 2;
-      Serial.println("Tare");
-      tareValue = loadCell.averageValue(32);
-    } else if (taskPart == "M13") { //Youngs Modulus Test Mode
-      mode = 4;
-      measuringIntervall = measuringIntervallTest;
-      maxForce = 0;
-      loweringCounter = 0;
-      digitalWrite(directionPin, LOW);
-      printSpaces(5);
-      Serial.println("Tare");
-      tareValue = loadCell.averageValue(32);
-      Serial.println("Start Test");
-      digitalWrite(led1Pin, HIGH);
-      delay(500);
-      digitalWrite(led1Pin, LOW);
-      delay(200);
-      digitalWrite(led1Pin, HIGH);
-      delay(500);
-      digitalWrite(led1Pin, LOW);
-      startTime = millis();
-    } else if (taskPart == "M14") { //Start FAST test
-      mode = 3;
-      measuringIntervall = measuringIntervallTestFast;
-      maxForce = 0;
-      loweringCounter = 0;
-      digitalWrite(directionPin, LOW);
-      printSpaces(5);
-      Serial.println("Tare");
-      tareValue = loadCell.averageValue(32);
-      Serial.println("Start Fast Test");
-      digitalWrite(led1Pin, HIGH);
-      delay(500);
-      digitalWrite(led1Pin, LOW);
-      delay(200);
-      digitalWrite(led1Pin, HIGH);
-      delay(500);
-      digitalWrite(led1Pin, LOW);
-    } else {
-      Serial.println("ERROR: Command not found!");
-    }
+  float intervalUs = 1000000.0f / speedSps;
+  float ticks = intervalUs * 2.0f; // 0.5us per tick
+  if (ticks < 60.0f) {
+    ticks = 60.0f;
   }
-  ///////////////// Tensile Test Mode ////////////
-  if (mode == 1) {
-    currentMicros = micros();
-    if ((currentMicros - lastStep) >= 1000000. / currentSpeed) {
-      digitalWrite(stepPin, HIGH);
-      delayMicroseconds(pulseLength);
-      digitalWrite(stepPin, LOW);
-      lastStep = currentMicros;
-    }
-    if (!digitalRead(downPin)) { //Stop test if DOWN Button is pressed
-      Serial.println("Test aborted - entering manual mode");
-      printSpaces(5);
-      mode = 2;
-      modeAddition = 0;
-      measuringIntervall = 2;
-      currentSpeed = stepsPerSecond;
-    }
-
-
-
-    ///////////////// MANUAL MODE //////////////////
-  } else if (mode == 2) {
-    boolean performStep = 0;
-    if (!digitalRead(upPin)) {
-      digitalWrite(directionPin, LOW);
-      performStep = 1;
-      if(debug){ Serial.println("UP"); }
-    } else if (!digitalRead(downPin)) {
-      digitalWrite(directionPin, HIGH);
-      performStep = 1;
-      if(debug){ Serial.println("DOWN"); }
-    }
-    //Perform Step
-    if (performStep) {
-      digitalWrite(stepPin, HIGH);
-      delayMicroseconds(pulseLength);
-      digitalWrite(stepPin, LOW);
-    }
-    if (digitalRead(speedPin)) {
-      delayMicroseconds(slowSpeedDelay);
-      if(debug){Serial.println("Slow Speed");}
-    } else {
-      delayMicroseconds(fastSpeedDelay);
-      if(debug){Serial.println("Fast Speed");}
-    }
-
-    // Fast Test Mode
-  } else if (mode == 3) {
-    currentMicros = micros();
-    if ((currentMicros - lastStep) >= 1000000. / fastSpeed) {
-      digitalWrite(stepPin, HIGH);
-      delayMicroseconds(pulseLength);
-      digitalWrite(stepPin, LOW);
-      lastStep = currentMicros;
-    }
-    if (!digitalRead(downPin)) {
-      Serial.println("Test aborted - entering manual mode");
-      printSpaces(5);
-      mode = 2;
-      modeAddition = 0;
-      measuringIntervall = 2;
-      currentSpeed = stepsPerSecond;
-    }
-    // Youngs Modulus Test
-  } else if (mode == 4) {
-    currentMicros = micros();
-    if ((currentMicros - lastStep) >= 1000000. / currentSpeed) {
-      digitalWrite(stepPin, HIGH);
-      delayMicroseconds(pulseLength);
-      digitalWrite(stepPin, LOW);
-      lastStep = currentMicros;
-    }
-    if (millis() - startTime >= yMTestTime) {
-      mode = 3;
-      measuringIntervall = measuringIntervallTestFast;
-    }
-    if (!digitalRead(downPin)) {
-      Serial.println("Test aborted - entering manual mode");
-      printSpaces(5);
-      mode = 2;
-      modeAddition = 0;
-      measuringIntervall = 2;
-      currentSpeed = stepsPerSecond;
-    }
+  if (ticks > 65535.0f) {
+    ticks = 65535.0f;
   }
+  noInterrupts();
+  stepIntervalTicks = (uint16_t)ticks;
+  OCR1A = stepIntervalTicks;
+  interrupts();
+}
 
+void setMotionEnabled(bool enabled) {
+  noInterrupts();
+  motionEnabled = enabled;
+  interrupts();
+}
 
-  ///////////// Get load value
-  currentMicros = micros();
-  if ((micros() - lastLoadValue) >= measuringIntervall * 1000000) {
-    digitalWrite(led1Pin, HIGH);
-    float loadValue = (loadCell.averageValue(1) - tareValue) / gainValue;
-    Serial.println(loadValue);
-    //Serial.println((loadCell.averageValue(1)-tareValue));
-    digitalWrite(led1Pin, LOW);
-    lastLoadValue = currentMicros;
-    if (mode == 1 && modeAddition == 1) {
-      if (loadValue >= maxForce) {
-        maxForce = loadValue;
-        loweringCounter = 0;
-      } else {
-        loweringCounter++;
+void enterManualMode() {
+  mode = MODE_MANUAL;
+  modeAddition = 0;
+  targetSpeedSps = 0.0f;
+  emitStatus("MODE", "manual");
+}
+
+void emitStatus(const char *code, const char *message) {
+  Serial.print("STATUS,");
+  Serial.print(millis());
+  Serial.print(',');
+  Serial.print(code);
+  Serial.print(',');
+  Serial.println(message);
+}
+
+void emitAck(const char *command, const char *message) {
+  Serial.print("ACK,");
+  Serial.print(millis());
+  Serial.print(',');
+  Serial.print(command);
+  Serial.print(',');
+  Serial.println(message);
+}
+
+void performTare() {
+  digitalWrite(led1Pin, HIGH);
+  tareValue = loadCell.averageValue(32);
+  digitalWrite(led1Pin, LOW);
+}
+
+void processSerial() {
+  while (Serial.available() > 0) {
+    char c = (char)Serial.read();
+    if (c == '\r') {
+      continue;
+    }
+    if (c == '\n') {
+      if (serialLineIndex > 0) {
+        serialLine[serialLineIndex] = '\0';
+        processCommand(serialLine);
+        serialLineIndex = 0;
       }
-      if (loweringCounter >= 20) {
-        currentSpeed = currentSpeed * 4;
-        modeAddition = 0;
-      }
+      continue;
+    }
+    if (serialLineIndex < sizeof(serialLine) - 1) {
+      serialLine[serialLineIndex++] = c;
     }
   }
 }
 
-void printSpaces(int numberOfSpaces) { //This function will print a given amount of empty lines
-  for (int i = numberOfSpaces; i > 0; i--) {
-    Serial.println("");
+void processCommand(char *line) {
+  char *cmd = strtok(line, " ");
+  char *arg1 = strtok(NULL, " ");
+  if (cmd == NULL) {
+    return;
   }
+
+  if (strcmp(cmd, "M10") == 0) {
+    mode = MODE_TEST_SLOW;
+    modeAddition = (arg1 != NULL && strcmp(arg1, "S1") == 0) ? 1 : 0;
+    maxForce = 0.0f;
+    loweringCounter = 0.0f;
+    setDirectionLow(true);
+    performTare();
+    emitAck("M10", "start_slow_test");
+  } else if (strcmp(cmd, "M11") == 0) {
+    enterManualMode();
+    emitAck("M11", "manual_mode");
+  } else if (strcmp(cmd, "M12") == 0) {
+    performTare();
+    emitAck("M12", "tare_ok");
+  } else if (strcmp(cmd, "M13") == 0) {
+    mode = MODE_YOUNGS;
+    maxForce = 0.0f;
+    loweringCounter = 0.0f;
+    setDirectionLow(true);
+    performTare();
+    startTimeMs = millis();
+    emitAck("M13", "start_youngs_test");
+  } else if (strcmp(cmd, "M14") == 0) {
+    mode = MODE_TEST_FAST;
+    maxForce = 0.0f;
+    loweringCounter = 0.0f;
+    setDirectionLow(true);
+    performTare();
+    emitAck("M14", "start_fast_test");
+  } else if (strcmp(cmd, "M20") == 0) {
+    noInterrupts();
+    zeroStepOffset = stepPosition;
+    interrupts();
+    emitAck("M20", "set_zero");
+  } else if (strcmp(cmd, "M21") == 0) {
+    mode = MODE_GOTO_ZERO;
+    emitAck("M21", "goto_zero");
+  } else if (strcmp(cmd, "M40") == 0 && arg1 != NULL) {
+    float mmPerMin = atof(arg1);
+    if (mmPerMin > 0.01f) {
+      slowTestSps = (mmPerMin / 60.0f) * stepsPerMM;
+      emitAck("M40", "slow_speed_set");
+    } else {
+      emitStatus("ERR", "invalid_slow_speed");
+    }
+  } else if (strcmp(cmd, "M41") == 0 && arg1 != NULL) {
+    float mmPerMin = atof(arg1);
+    if (mmPerMin > 0.01f) {
+      fastTestSps = (mmPerMin / 60.0f) * stepsPerMM;
+      emitAck("M41", "fast_speed_set");
+    } else {
+      emitStatus("ERR", "invalid_fast_speed");
+    }
+  } else if (strcmp(cmd, "M42") == 0 && arg1 != NULL) {
+    float accelMmPerS2 = atof(arg1);
+    if (accelMmPerS2 > 0.01f) {
+      accelSps2 = accelMmPerS2 * stepsPerMM;
+      emitAck("M42", "accel_set");
+    } else {
+      emitStatus("ERR", "invalid_accel");
+    }
+  } else if (strcmp(cmd, "M43") == 0 && arg1 != NULL) {
+    float newGain = atof(arg1);
+    if (newGain != 0.0f) {
+      gainValue = newGain;
+      emitAck("M43", "gain_set");
+    } else {
+      emitStatus("ERR", "invalid_gain");
+    }
+  } else {
+    emitStatus("ERR", "unknown_command");
+  }
+}
+
+void updateModeAndTargets() {
+  if (mode == MODE_TEST_SLOW) {
+    setDirectionLow(true);
+    targetSpeedSps = slowTestSps;
+    if (!digitalRead(downPin)) {
+      emitStatus("ABORT", "slow_test_stopped");
+      enterManualMode();
+    }
+  } else if (mode == MODE_MANUAL) {
+    if (!digitalRead(upPin)) {
+      setDirectionLow(true);
+      targetSpeedSps = digitalRead(speedPin) ? jogSlowSps : jogFastSps;
+      if (debug) {
+        emitStatus("DBG", "manual_up");
+      }
+    } else if (!digitalRead(downPin)) {
+      setDirectionLow(false);
+      targetSpeedSps = digitalRead(speedPin) ? jogSlowSps : jogFastSps;
+      if (debug) {
+        emitStatus("DBG", "manual_down");
+      }
+    } else {
+      targetSpeedSps = 0.0f;
+    }
+  } else if (mode == MODE_TEST_FAST) {
+    setDirectionLow(true);
+    targetSpeedSps = fastTestSps;
+    if (!digitalRead(downPin)) {
+      emitStatus("ABORT", "fast_test_stopped");
+      enterManualMode();
+    }
+  } else if (mode == MODE_YOUNGS) {
+    setDirectionLow(true);
+    if (millis() - startTimeMs < yMTestTimeMs) {
+      targetSpeedSps = slowTestSps;
+    } else {
+      targetSpeedSps = fastTestSps;
+    }
+    if (!digitalRead(downPin)) {
+      emitStatus("ABORT", "youngs_test_stopped");
+      enterManualMode();
+    }
+  } else if (mode == MODE_GOTO_ZERO) {
+    long delta;
+    noInterrupts();
+    delta = zeroStepOffset - stepPosition;
+    interrupts();
+
+    if (delta > 0) {
+      setDirectionLow(true);
+      targetSpeedSps = gotoZeroSps;
+    } else if (delta < 0) {
+      setDirectionLow(false);
+      targetSpeedSps = gotoZeroSps;
+    } else {
+      targetSpeedSps = 0.0f;
+      enterManualMode();
+      emitStatus("DONE", "at_zero");
+    }
+
+    if (!digitalRead(downPin)) {
+      emitStatus("ABORT", "goto_zero_stopped");
+      enterManualMode();
+    }
+  }
+}
+
+void updateAcceleration() {
+  unsigned long nowUs = micros();
+  if ((unsigned long)(nowUs - lastAccelUpdateUs) < accelUpdateIntervalUs) {
+    return;
+  }
+  float dt = (float)(nowUs - lastAccelUpdateUs) / 1000000.0f;
+  lastAccelUpdateUs = nowUs;
+
+  float maxDelta = accelSps2 * dt;
+  float diff = targetSpeedSps - currentSpeedSps;
+  if (diff > maxDelta) {
+    diff = maxDelta;
+  } else if (diff < -maxDelta) {
+    diff = -maxDelta;
+  }
+  currentSpeedSps += diff;
+
+  if (currentSpeedSps < 0.5f) {
+    currentSpeedSps = 0.0f;
+    setMotionEnabled(false);
+  } else {
+    setStepIntervalFromSpeed(currentSpeedSps);
+    setMotionEnabled(true);
+  }
+}
+
+float getDisplacementMm() {
+  long pos;
+  noInterrupts();
+  pos = stepPosition;
+  interrupts();
+  return (float)(pos - zeroStepOffset) / stepsPerMM;
+}
+
+void sampleAndStream() {
+  unsigned long nowUs = micros();
+  if ((unsigned long)(nowUs - lastSampleUs) < sampleIntervalUs) {
+    return;
+  }
+  lastSampleUs = nowUs;
+
+  digitalWrite(led1Pin, HIGH);
+  float loadValue = ((float)loadCell.averageValue(1) - (float)tareValue) / gainValue;
+  digitalWrite(led1Pin, LOW);
+
+  if (mode == MODE_TEST_SLOW && modeAddition == 1) {
+    if (loadValue >= maxForce) {
+      maxForce = loadValue;
+      loweringCounter = 0.0f;
+    } else {
+      loweringCounter += 1.0f;
+    }
+    if (loweringCounter >= 20.0f) {
+      targetSpeedSps = targetSpeedSps * 4.0f;
+      modeAddition = 0;
+      emitStatus("MODE", "slow_test_break_detected_speedup");
+    }
+  } else {
+    if (loadValue > maxForce) {
+      maxForce = loadValue;
+    }
+  }
+
+  long positionSnapshot;
+  noInterrupts();
+  positionSnapshot = stepPosition;
+  interrupts();
+  float displacement = (float)(positionSnapshot - zeroStepOffset) / stepsPerMM;
+
+  Serial.print("DATA,");
+  Serial.print(millis());
+  Serial.print(',');
+  Serial.print(loadValue, 5);
+  Serial.print(',');
+  Serial.print(positionSnapshot);
+  Serial.print(',');
+  Serial.print(displacement, 5);
+  Serial.print(',');
+  Serial.print(mode);
+  Serial.print(',');
+  Serial.println(currentSpeedSps, 2);
 }

@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Open Pull Control</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="app">
+    <header class="topbar">
+      <div class="brand">
+        <h1>Open Pull</h1>
+        <span>Tensile Tester Console</span>
+      </div>
+      <div class="top-actions">
+        <button id="connectBtn" class="btn">Connect</button>
+        <span id="connectionState" class="badge">Disconnected</span>
+      </div>
+    </header>
+
+    <main class="layout">
+      <section class="left-panel">
+        <label class="section-label">Current Load</label>
+        <div class="big-metric" id="currentLoad">0.00 N</div>
+
+        <label class="section-label">Max Load</label>
+        <div class="small-metric" id="maxLoad">0.00 N</div>
+
+        <select id="testType" class="input full">
+          <option value="slow">Slow Test</option>
+          <option value="fast">Fast Test</option>
+          <option value="youngs">Youngs Modulus</option>
+        </select>
+
+        <div class="inline-input">
+          <input id="speedInput" class="input" type="number" step="0.01" value="1.00" />
+          <span>mm/min Speed</span>
+        </div>
+
+        <div class="inline-input">
+          <input id="widthInput" class="input" type="number" step="0.01" value="10.00" />
+          <span>mm Width</span>
+        </div>
+
+        <div class="inline-input">
+          <input id="heightInput" class="input" type="number" step="0.01" value="2.00" />
+          <span>mm Height</span>
+        </div>
+
+        <input id="sampleName" class="input full" placeholder="Sample Name" />
+
+        <div class="inline-input">
+          <input id="gainInput" class="input" type="number" step="0.1" placeholder="-875.7" />
+          <button id="setGainBtn" class="btn mini">Set Gain</button>
+        </div>
+
+        <button id="newTestBtn" class="btn full">New Test</button>
+        <button id="startTestBtn" class="btn full strong">START TEST</button>
+        <button id="tareBtn" class="btn full">Tare</button>
+
+        <div class="split">
+          <button id="setZeroBtn" class="btn">Set ZERO</button>
+          <button id="gotoZeroBtn" class="btn">Goto ZERO</button>
+        </div>
+
+        <button id="exportBtn" class="btn full">Export</button>
+      </section>
+
+      <section class="main-panel">
+        <div class="metrics-grid">
+          <div class="metric-card">
+            <label class="section-label">Current Displacement</label>
+            <div class="big-metric" id="currentDisp">0.000 mm</div>
+          </div>
+          <div class="metric-card">
+            <label class="section-label">Current Stress</label>
+            <div class="big-metric" id="currentStress">0.000 MPa</div>
+            <label class="section-label">Max Stress</label>
+            <div class="small-metric" id="maxStress">0.000 MPa</div>
+          </div>
+        </div>
+
+        <div class="chart-wrap">
+          <canvas id="chartCanvas" width="760" height="440"></canvas>
+        </div>
+
+        <div class="status-line" id="statusLine">STATUS: ready</div>
+      </section>
+    </main>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
