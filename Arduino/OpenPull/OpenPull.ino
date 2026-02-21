@@ -574,7 +574,19 @@ void updateModeAndTargets() {
     delta = zeroStepOffset - stepPosition;
     interrupts();
 
-    if (delta > 0) {
+    long remainingSteps = (delta >= 0) ? delta : -delta;
+    float brakingDistanceSteps = 0.0f;
+    if (accelSps2 > 0.01f) {
+      brakingDistanceSteps = (currentSpeedSps * currentSpeedSps) / (2.0f * accelSps2);
+    }
+
+    if (remainingSteps <= 1 && currentSpeedSps < 0.5f) {
+      targetSpeedSps = 0.0f;
+      enterManualMode();
+      emitStatus("DONE", "at_zero");
+    } else if (remainingSteps <= (long)(brakingDistanceSteps + 1.0f)) {
+      targetSpeedSps = 0.0f;
+    } else if (delta > 0) {
       setDirectionLow(true);
       targetSpeedSps = fastTestSps;
     } else if (delta < 0) {
@@ -582,8 +594,6 @@ void updateModeAndTargets() {
       targetSpeedSps = fastTestSps;
     } else {
       targetSpeedSps = 0.0f;
-      enterManualMode();
-      emitStatus("DONE", "at_zero");
     }
 
     if (!digitalRead(downPin)) {
@@ -596,7 +606,19 @@ void updateModeAndTargets() {
     delta = relativeMoveTargetStep - stepPosition;
     interrupts();
 
-    if (delta > 0) {
+    long remainingSteps = (delta >= 0) ? delta : -delta;
+    float brakingDistanceSteps = 0.0f;
+    if (accelSps2 > 0.01f) {
+      brakingDistanceSteps = (currentSpeedSps * currentSpeedSps) / (2.0f * accelSps2);
+    }
+
+    if (remainingSteps <= 1 && currentSpeedSps < 0.5f) {
+      targetSpeedSps = 0.0f;
+      enterManualMode();
+      emitStatus("DONE", "relative_move_done");
+    } else if (remainingSteps <= (long)(brakingDistanceSteps + 1.0f)) {
+      targetSpeedSps = 0.0f;
+    } else if (delta > 0) {
       setDirectionLow(true);
       targetSpeedSps = relativeMoveSpeedSps;
     } else if (delta < 0) {
@@ -604,8 +626,6 @@ void updateModeAndTargets() {
       targetSpeedSps = relativeMoveSpeedSps;
     } else {
       targetSpeedSps = 0.0f;
-      enterManualMode();
-      emitStatus("DONE", "relative_move_done");
     }
 
     if (!digitalRead(downPin)) {

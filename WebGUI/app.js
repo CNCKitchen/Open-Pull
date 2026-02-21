@@ -2,6 +2,7 @@ const connectBtn = document.getElementById('connectBtn');
 const emergencyStopBtn = document.getElementById('emergencyStopBtn');
 const connectionState = document.getElementById('connectionState');
 const statusLine = document.getElementById('statusLine');
+const serialMonitorEl = document.getElementById('serialMonitor');
 
 const currentLoadEl = document.getElementById('currentLoad');
 const maxLoadEl = document.getElementById('maxLoad');
@@ -56,6 +57,7 @@ const MANUAL_MODE_VALUE = 2;
 const MAX_SAMPLES_PER_TEST = 5000;
 const OVERLAY_COLORS = ['#ff9f6c', '#8ce99a', '#d0a6ff', '#6ee7ff', '#ffd166', '#ff8fab'];
 const LOAD_SPIKE_JUMP_THRESHOLD_N = 300;
+const MAX_SERIAL_MONITOR_LINES = 250;
 
 let serialPort = null;
 let serialReader = null;
@@ -67,6 +69,9 @@ let writableStreamClosed = null;
 let persistTimeoutId = null;
 let lastIncomingMode = MANUAL_MODE_VALUE;
 let lastAcceptedLoadN = null;
+let serialMonitorLines = [];
+let configSyncTimeoutId = null;
+let hasReceivedMachineData = false;
 
 const seriesState = {
   version: 1,
@@ -100,6 +105,46 @@ function setStatus(text) {
   statusLine.textContent = `STATUS: ${text}`;
 }
 
+function scheduleMachineConfigSync() {
+  if (configSyncTimeoutId) {
+    clearTimeout(configSyncTimeoutId);
+    configSyncTimeoutId = null;
+  }
+
+  configSyncTimeoutId = setTimeout(async () => {
+    configSyncTimeoutId = null;
+    if (!serialWriter) {
+      return;
+    }
+    await sendCommand('M50');
+
+    setTimeout(async () => {
+      if (serialWriter) {
+        await sendCommand('M50');
+      }
+    }, 1200);
+  }, 1200);
+}
+
+function appendSerialMonitorLine(line) {
+  if (!serialMonitorEl) {
+    return;
+  }
+
+  const normalized = String(line ?? '').replace(/\r/g, '');
+  if (!normalized) {
+    return;
+  }
+
+  serialMonitorLines.push(normalized);
+  if (serialMonitorLines.length > MAX_SERIAL_MONITOR_LINES) {
+    serialMonitorLines = serialMonitorLines.slice(serialMonitorLines.length - MAX_SERIAL_MONITOR_LINES);
+  }
+
+  serialMonitorEl.textContent = serialMonitorLines.join('\n');
+  serialMonitorEl.scrollTop = serialMonitorEl.scrollHeight;
+}
+
 function setConnectionBadge(connected) {
   if (connected) {
     connectionState.textContent = 'Connected';
@@ -116,6 +161,19 @@ function setConnectionBadge(connected) {
 
 function formatNum(value, digits = 3) {
   return Number.isFinite(value) ? value.toFixed(digits) : (0).toFixed(digits);
+}
+
+function parseFlexibleNumber(rawValue) {
+  if (rawValue === null || rawValue === undefined) {
+    return NaN;
+  }
+
+  const normalized = String(rawValue)
+    .trim()
+    .replace(',', '.')
+    .replace(/[^0-9eE+\-.]/g, '');
+
+  return parseFloat(normalized);
 }
 
 function escapeCsv(value) {
@@ -139,10 +197,10 @@ function isRunningTest(test) {
 
 function getGeometryFromInputs() {
   const testType = testTypeEl.value;
-  const speedMmMin = parseFloat(speedInputEl.value);
-  const widthMm = parseFloat(widthInputEl.value);
-  const heightMm = parseFloat(heightInputEl.value);
-  const diameterMm = parseFloat(diameterInputEl.value);
+  const speedMmMin = parseFlexibleNumber(speedInputEl.value);
+  const widthMm = parseFlexibleNumber(widthInputEl.value);
+  const heightMm = parseFlexibleNumber(heightInputEl.value);
+  const diameterMm = parseFlexibleNumber(diameterInputEl.value);
 
   return {
     testType,
@@ -234,7 +292,7 @@ function updateStartButtonState() {
 }
 
 function getConfiguredAccelerationMmPerS2() {
-  const accel = parseFloat(accelInputEl?.value);
+  const accel = parseFlexibleNumber(accelInputEl?.value);
   if (!Number.isFinite(accel) || accel <= 0) {
     return null;
   }
@@ -246,7 +304,7 @@ function getConfiguredAccelerationMmPerS2() {
 }
 
 function getConfiguredPositiveNumber(inputEl, decimals = 1) {
-  const value = parseFloat(inputEl?.value);
+  const value = parseFlexibleNumber(inputEl?.value);
   if (!Number.isFinite(value) || value <= 0) {
     return null;
   }
@@ -267,6 +325,16 @@ function clearSampleFieldsForNextTest() {
 }
 
 function resetMetricsDisplay() {
+  if (!hasReceivedMachineData) {
+    currentLoadEl.textContent = '-';
+    currentDispEl.textContent = '-';
+    currentStressEl.textContent = '-';
+    maxLoadEl.textContent = '0 N';
+    maxStressEl.textContent = '-';
+    stressCardEl.classList.toggle('disabled', testTypeEl.value === 'load');
+    return;
+  }
+
   if (Number.isFinite(lastAcceptedLoadN)) {
     currentLoadEl.textContent = `${formatNum(lastAcceptedLoadN, 0)} N`;
   } else {
@@ -315,6 +383,11 @@ function sanitizeIncomingLoad(loadN) {
 }
 
 function updateMetricsFromTest(test) {
+  if (!hasReceivedMachineData) {
+    resetMetricsDisplay();
+    return;
+  }
+
   if (!test || test.samples.length === 0) {
     resetMetricsDisplay();
     return;
@@ -670,6 +743,12 @@ function beginNewSeries() {
     return;
   }
 
+  const confirmed = window.confirm('Create a new series? This will clear all saved tests in the current series.');
+  if (!confirmed) {
+    setStatus('new_series_cancelled');
+    return;
+  }
+
   seriesState.seriesId = `series-${new Date().toISOString().replace(/[:.]/g, '-')}`;
   seriesState.createdAtIso = new Date().toISOString();
   seriesState.tests = [];
@@ -721,6 +800,7 @@ function createTestFromCurrentInputs() {
     startedAtIso: new Date().toISOString(),
     finishedAtIso: null,
     status: 'running',
+    pendingStart: true,
     completionReason: '',
     meta: {
       sampleName,
@@ -755,6 +835,14 @@ function appendDataToActiveTest(sample) {
     return;
   }
 
+  if (activeTest.pendingStart) {
+    if (!TEST_MODE_VALUES.has(sample.mode)) {
+      return;
+    }
+    activeTest.pendingStart = false;
+    activeTest.startedAtIso = new Date().toISOString();
+  }
+
   activeTest.samples.push(sample);
   if (activeTest.samples.length > MAX_SAMPLES_PER_TEST) {
     activeTest.samples.shift();
@@ -770,13 +858,13 @@ function applyMachineConfigFromParts(parts) {
     return;
   }
 
-  const slowMmPerMin = parseFloat(parts[2]);
-  const fastMmPerMin = parseFloat(parts[3]);
-  const accelMmPerS2 = parseFloat(parts[4]);
-  const gain = parseFloat(parts[5]);
-  const sampleRateHz = parseFloat(parts[6]);
-  const manualSlowMmPerMin = parseFloat(parts[7]);
-  const manualFastMmPerMin = parseFloat(parts[8]);
+  const slowMmPerMin = parseFlexibleNumber(parts[2]);
+  const fastMmPerMin = parseFlexibleNumber(parts[3]);
+  const accelMmPerS2 = parseFlexibleNumber(parts[4]);
+  const gain = parseFlexibleNumber(parts[5]);
+  const sampleRateHz = parseFlexibleNumber(parts[6]);
+  const manualSlowMmPerMin = parseFlexibleNumber(parts[7]);
+  const manualFastMmPerMin = parseFlexibleNumber(parts[8]);
 
   if (Number.isFinite(accelMmPerS2) && accelInputEl) {
     accelInputEl.value = accelMmPerS2.toFixed(1);
@@ -822,6 +910,7 @@ function parseLine(line) {
   const tag = parts[0];
 
   if (tag === 'DATA' && parts.length >= 7) {
+    hasReceivedMachineData = true;
     const timestampMs = parseInt(parts[1], 10);
     const loadN = sanitizeIncomingLoad(parseFloat(parts[2]));
     const stepPos = parseInt(parts[3], 10);
@@ -830,6 +919,7 @@ function parseLine(line) {
     const speedSps = parseFloat(parts[6]);
 
     currentLoadEl.textContent = `${formatNum(loadN, 0)} N`;
+  currentDispEl.textContent = `${formatNum(displacementMm, 2)} mm`;
 
     const activeTest = getActiveTest();
     const area = activeTest ? getAreaMm2FromMeta(activeTest.meta) : getCurrentFormAreaMm2();
@@ -858,6 +948,10 @@ function parseLine(line) {
     const code = parts[2];
     const message = parts.slice(3).join(',');
     setStatus(`${code} ${message}`);
+
+    if (code === 'BOOT') {
+      scheduleMachineConfigSync();
+    }
 
     if (code === 'ABORT') {
       markActiveTestFinished('aborted');
@@ -891,6 +985,7 @@ function parseLine(line) {
 async function readSerialLoop() {
   let textBuffer = '';
   readerActive = true;
+  appendSerialMonitorLine('[read] serial loop started');
 
   try {
     while (readerActive && serialReader) {
@@ -902,12 +997,15 @@ async function readSerialLoop() {
       const lines = textBuffer.split('\n');
       textBuffer = lines.pop() || '';
       for (const line of lines) {
+        appendSerialMonitorLine(line);
         parseLine(line);
       }
     }
   } catch (error) {
+    appendSerialMonitorLine(`[read_error] ${error.message}`);
     setStatus(`read_error ${error.message}`);
   } finally {
+    appendSerialMonitorLine('[read] serial loop stopped');
     if (serialReader) {
       serialReader.releaseLock();
       serialReader = null;
@@ -937,15 +1035,22 @@ async function connectSerial() {
     setConnectionBadge(true);
     updateStartButtonState();
     setStatus('connected');
+    appendSerialMonitorLine('[port] connected');
     readSerialLoop();
-    await sendCommand('M50');
+    scheduleMachineConfigSync();
   } catch (error) {
+    appendSerialMonitorLine(`[connect_error] ${error.message}`);
     setStatus(`connect_error ${error.message}`);
   }
 }
 
 async function disconnectSerial() {
   readerActive = false;
+
+  if (configSyncTimeoutId) {
+    clearTimeout(configSyncTimeoutId);
+    configSyncTimeoutId = null;
+  }
 
   try {
     if (serialReader) {
@@ -987,6 +1092,7 @@ async function disconnectSerial() {
   connectBtn.textContent = 'Connect';
   setConnectionBadge(false);
   updateStartButtonState();
+  appendSerialMonitorLine('[port] disconnected');
   setStatus('disconnected');
 }
 
@@ -1167,7 +1273,7 @@ gotoZeroBtn.addEventListener('click', async () => {
 
 if (setGainBtn && gainInputEl) {
   setGainBtn.addEventListener('click', async () => {
-    const gain = parseFloat(gainInputEl.value);
+    const gain = parseFlexibleNumber(gainInputEl.value);
     if (!Number.isFinite(gain) || gain === 0) {
       setStatus('invalid_gain');
       return;
