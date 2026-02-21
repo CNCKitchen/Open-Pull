@@ -17,15 +17,18 @@ const diameterInputEl = document.getElementById('diameterInput');
 const stressCardEl = document.getElementById('stressCard');
 const sampleNameEl = document.getElementById('sampleName');
 const sampleCommentEl = document.getElementById('sampleComment');
+const accelInputEl = document.getElementById('accelInput');
 const gainInputEl = document.getElementById('gainInput');
 
 const newSeriesBtn = document.getElementById('newSeriesBtn');
 const newTestBtn = document.getElementById('newTestBtn');
 const startTestBtn = document.getElementById('startTestBtn');
+const manualStopBtn = document.getElementById('manualStopBtn');
 const tareBtn = document.getElementById('tareBtn');
 const setZeroBtn = document.getElementById('setZeroBtn');
 const gotoZeroBtn = document.getElementById('gotoZeroBtn');
 const exportBtn = document.getElementById('exportBtn');
+const setAccelBtn = document.getElementById('setAccelBtn');
 const setGainBtn = document.getElementById('setGainBtn');
 
 const seriesIdLabelEl = document.getElementById('seriesIdLabel');
@@ -212,6 +215,18 @@ function updateStartButtonState() {
   startTestBtn.disabled = !canStart;
 }
 
+function getConfiguredAccelerationMmPerS2() {
+  const accel = parseFloat(accelInputEl?.value);
+  if (!Number.isFinite(accel) || accel <= 0) {
+    return null;
+  }
+  const roundedAccel = Number(accel.toFixed(1));
+  if (accelInputEl) {
+    accelInputEl.value = roundedAccel.toFixed(1);
+  }
+  return roundedAccel;
+}
+
 function clearSampleFieldsForNextTest() {
   sampleNameEl.value = '';
   sampleCommentEl.value = '';
@@ -309,25 +324,17 @@ function renderChart() {
   ctx.fillStyle = '#121b2c';
   ctx.fillRect(0, 0, width, height);
 
-  const margin = 50;
-  const plotW = width - margin * 2;
-  const plotH = height - margin * 2;
-
-  ctx.strokeStyle = '#2f3f61';
-  ctx.lineWidth = 1;
-  ctx.strokeRect(margin, margin, plotW, plotH);
-
-  ctx.fillStyle = '#8ea7d6';
-  ctx.font = '14px "Segoe UI", Arial, sans-serif';
-  ctx.fillText('Force (N)', 10, margin - 8);
-  ctx.fillText('Time (s)', width - 90, height - 12);
+  const marginLeft = 56;
+  const marginRight = 20;
+  const marginTop = 20;
+  const marginBottom = 42;
+  const plotX = marginLeft;
+  const plotY = marginTop;
+  const plotW = width - marginLeft - marginRight;
+  const plotH = height - marginTop - marginBottom;
 
   const seriesEntries = getVisibleChartSeries();
-  if (seriesEntries.length === 0) {
-    return;
-  }
-
-  let tMax = 0;
+  let tMax = 1;
   let fMax = 1;
 
   seriesEntries.forEach(entry => {
@@ -341,20 +348,86 @@ function renderChart() {
     if (testFMax > fMax) fMax = testFMax;
   });
 
+  const yTicks = 6;
+  const xTicks = 8;
+
+  ctx.strokeStyle = '#2f3f61';
+  ctx.lineWidth = 1;
+  ctx.strokeRect(plotX, plotY, plotW, plotH);
+
+  ctx.font = '12px "Segoe UI", Arial, sans-serif';
+  ctx.fillStyle = '#8ea7d6';
+
+  for (let i = 0; i <= yTicks; i += 1) {
+    const ratio = i / yTicks;
+    const y = plotY + plotH - ratio * plotH;
+    const forceVal = ratio * fMax;
+
+    ctx.beginPath();
+    ctx.moveTo(plotX, y);
+    ctx.lineTo(plotX + plotW, y);
+    ctx.stroke();
+
+    ctx.fillText(formatNum(forceVal, forceVal >= 100 ? 0 : 1), 6, y + 4);
+  }
+
+  for (let i = 0; i <= xTicks; i += 1) {
+    const ratio = i / xTicks;
+    const x = plotX + ratio * plotW;
+    const timeVal = ratio * tMax;
+
+    ctx.beginPath();
+    ctx.moveTo(x, plotY);
+    ctx.lineTo(x, plotY + plotH);
+    ctx.stroke();
+
+    ctx.fillText(formatNum(timeVal, timeVal >= 10 ? 0 : 1), x - 10, plotY + plotH + 16);
+  }
+
+  ctx.fillText('Force (N)', 8, plotY - 6);
+  ctx.fillText('Time (s)', plotX + plotW - 50, plotY + plotH + 32);
+
+  if (seriesEntries.length === 0) {
+    return;
+  }
+
   seriesEntries.forEach(entry => {
     const samples = entry.test.samples;
     const t0 = samples[0].timestampMs;
+    const originX = plotX;
+    const originY = plotY + plotH;
+
+    ctx.beginPath();
+    ctx.moveTo(originX, originY);
+    let lastX = originX;
+
+    samples.forEach(sample => {
+      const relTimeS = (sample.timestampMs - t0) / 1000;
+      const x = plotX + (tMax > 0 ? (relTimeS / tMax) * plotW : 0);
+      const y = plotY + plotH - (sample.loadN / fMax) * plotH;
+      ctx.lineTo(x, y);
+      lastX = x;
+    });
+
+    ctx.lineTo(lastX, originY);
+    ctx.closePath();
+
+    ctx.save();
+    ctx.globalAlpha = entry.isActive ? 0.18 : 0.1;
+    ctx.fillStyle = entry.color;
+    ctx.fill();
+    ctx.restore();
 
     ctx.strokeStyle = entry.color;
     ctx.lineWidth = entry.isActive ? 2.2 : 1.6;
     ctx.beginPath();
 
-    samples.forEach((sample, idx) => {
+    ctx.moveTo(originX, originY);
+    samples.forEach(sample => {
       const relTimeS = (sample.timestampMs - t0) / 1000;
-      const x = margin + (tMax > 0 ? (relTimeS / tMax) * plotW : 0);
-      const y = margin + plotH - (sample.loadN / fMax) * plotH;
-      if (idx === 0) ctx.moveTo(x, y);
-      else ctx.lineTo(x, y);
+      const x = plotX + (tMax > 0 ? (relTimeS / tMax) * plotW : 0);
+      const y = plotY + plotH - (sample.loadN / fMax) * plotH;
+      ctx.lineTo(x, y);
     });
 
     ctx.stroke();
@@ -911,6 +984,12 @@ startTestBtn.addEventListener('click', async () => {
   const roundedSpeed = Number(safeSpeed.toFixed(1));
   speedInputEl.value = roundedSpeed.toFixed(1);
 
+  const accelMmPerS2 = getConfiguredAccelerationMmPerS2();
+  if (accelMmPerS2 === null) {
+    setStatus('invalid_accel');
+    return;
+  }
+
   const test = createTestFromCurrentInputs();
   test.meta.speedMmMin = roundedSpeed;
 
@@ -923,10 +1002,19 @@ startTestBtn.addEventListener('click', async () => {
   schedulePersistState();
   refreshUi();
 
+  await sendCommand('M12');
+  await sendCommand(`M42 ${accelMmPerS2.toFixed(1)}`);
   await sendCommand(`M40 ${roundedSpeed.toFixed(1)}`);
   await sendCommand('M10');
   setStatus('test_started');
 });
+
+if (manualStopBtn) {
+  manualStopBtn.addEventListener('click', async () => {
+    await sendCommand('M11');
+    setStatus('manual_stop');
+  });
+}
 
 emergencyStopBtn.addEventListener('click', async () => {
   await sendCommand('M11');
@@ -953,6 +1041,17 @@ if (setGainBtn && gainInputEl) {
       return;
     }
     await sendCommand(`M43 ${gain}`);
+  });
+}
+
+if (setAccelBtn && accelInputEl) {
+  setAccelBtn.addEventListener('click', async () => {
+    const accelMmPerS2 = getConfiguredAccelerationMmPerS2();
+    if (accelMmPerS2 === null) {
+      setStatus('invalid_accel');
+      return;
+    }
+    await sendCommand(`M42 ${accelMmPerS2.toFixed(1)}`);
   });
 }
 

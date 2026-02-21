@@ -61,6 +61,7 @@
         <button id="newSeriesBtn" class="btn full">New Series</button>
         <button id="newTestBtn" class="btn full">New Test</button>
         <button id="startTestBtn" class="btn full strong">START TEST</button>
+        <button id="manualStopBtn" class="btn full">Manual Stop</button>
         <button id="tareBtn" class="btn full">Tare</button>
 
         <div class="split">
@@ -72,6 +73,10 @@
 
         <details class="config-section">
           <summary>Configuration</summary>
+          <div class="inline-input">
+            <input id="accelInput" class="input" type="number" step="0.1" value="30.0" />
+            <button id="setAccelBtn" class="btn mini">Set Accel</button>
+          </div>
           <div class="inline-input">
             <input id="gainInput" class="input" type="number" step="0.1" placeholder="-875.7" />
             <button id="setGainBtn" class="btn mini">Set Gain</button>

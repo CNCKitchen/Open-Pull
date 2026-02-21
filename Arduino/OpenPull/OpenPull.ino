@@ -1,21 +1,21 @@
 /*########################################
   ##### OPEN PULL
   ##### DIY Universal Test Machine
-  ##### V2.0 (non-blocking + ramped motion)
+  ##### V2.1 (non-blocking + ramped motion)
   ##### Stefan Hermann aka CNC Kitchen
   ##### https://www.youtube.com/cnckitchen
   ##### Libraries:
-  ##### HX711 by aguegu: https://github.com/aguegu/ardulibs/tree/master/hx711
+  ##### HX711 by Bogde: https://github.com/bogde/HX711
   ########################################*/
 
-#include "hx711.h"
+#include <HX711.h>
 #include <string.h>
 #include <stdlib.h>
 
 ////// Load Cell Variables
 float gainValue = -875.7f * (1.0f - 0.001f); // CALIBRATION FACTOR
 long tareValue = 0;
-Hx711 loadCell(A0, A1);
+HX711 loadCell;
 
 ////// Stepper / Kinematics
 const uint8_t directionPin = 3;
@@ -35,13 +35,14 @@ const float jogFastSps = 1000000.0f / 300.0f;
 // Motion profile defaults
 float slowTestSps = baseTestSpeedSps;
 float fastTestSps = 25.0f * baseTestSpeedSps; // 25 mm/min
-float accelSps2 = 800.0f;
+float accelSps2 = 4000.0f;
 float gotoZeroSps = 8.0f * baseTestSpeedSps;
 
 // Timing
 const unsigned long yMTestTimeMs = 30000UL;
 const unsigned long accelUpdateIntervalUs = 5000UL;
 const unsigned long sampleIntervalUs = 12500UL; // target 80 Hz stream
+const unsigned long hx711MissingDataTimeoutMs = 1500UL;
 
 // Mode definitions
 const byte MODE_TEST_SLOW = 1;
@@ -62,10 +63,13 @@ float targetSpeedSps = 0.0f;
 float currentSpeedSps = 0.0f;
 float maxForce = 0.0f;
 float loweringCounter = 0.0f;
+float lastLoadValue = 0.0f;
 long zeroStepOffset = 0;
 unsigned long startTimeMs = 0;
 unsigned long lastSampleUs = 0;
 unsigned long lastAccelUpdateUs = 0;
+unsigned long lastHx711WarnMs = 0;
+unsigned long lastHx711DataMs = 0;
 bool debug = false;
 
 char serialLine[96];
@@ -85,6 +89,7 @@ void updateAcceleration();
 void sampleAndStream();
 float getDisplacementMm();
 void performTare();
+void emitHx711NotReady();
 
 ISR(TIMER1_COMPA_vect) {
   if (!motionEnabled) {
@@ -119,6 +124,8 @@ void setup() {
   pinMode(led1Pin, OUTPUT);
   digitalWrite(led1Pin, LOW);
 
+  loadCell.begin(A0, A1);
+  lastHx711DataMs = millis();
   setupTimer1();
   performTare();
   lastAccelUpdateUs = micros();
@@ -201,9 +208,26 @@ void emitAck(const char *command, const char *message) {
   Serial.println(message);
 }
 
+void emitHx711NotReady() {
+  unsigned long nowMs = millis();
+  if ((unsigned long)(nowMs - lastHx711DataMs) < hx711MissingDataTimeoutMs) {
+    return;
+  }
+  if ((unsigned long)(nowMs - lastHx711WarnMs) >= 1000UL) {
+    emitStatus("ERR", "hx711_not_ready");
+    lastHx711WarnMs = nowMs;
+  }
+}
+
 void performTare() {
   digitalWrite(led1Pin, HIGH);
-  tareValue = loadCell.averageValue(32);
+  if (!loadCell.is_ready()) {
+    emitHx711NotReady();
+    digitalWrite(led1Pin, LOW);
+    return;
+  }
+  tareValue = loadCell.read_average(32);
+  lastHx711DataMs = millis();
   digitalWrite(led1Pin, LOW);
 }
 
@@ -417,7 +441,14 @@ void sampleAndStream() {
   lastSampleUs = nowUs;
 
   digitalWrite(led1Pin, HIGH);
-  float loadValue = ((float)loadCell.averageValue(1) - (float)tareValue) / gainValue;
+  float loadValue = lastLoadValue;
+  if (loadCell.is_ready()) {
+    loadValue = ((float)loadCell.read_average(1) - (float)tareValue) / gainValue;
+    lastLoadValue = loadValue;
+    lastHx711DataMs = millis();
+  } else {
+    emitHx711NotReady();
+  }
   digitalWrite(led1Pin, LOW);
 
   if (mode == MODE_TEST_SLOW && modeAddition == 1) {
