@@ -56,7 +56,9 @@
         </div>
 
         <input id="sampleName" class="input full" placeholder="Sample Name" />
+        <input id="sampleComment" class="input full" placeholder="Comment" />
 
+        <button id="newSeriesBtn" class="btn full">New Series</button>
         <button id="newTestBtn" class="btn full">New Test</button>
         <button id="startTestBtn" class="btn full strong">START TEST</button>
         <button id="tareBtn" class="btn full">Tare</button>
@@ -98,6 +100,15 @@
         <div class="status-line" id="statusLine">STATUS: ready</div>
       </section>
     </main>
+
+    <section class="series-panel" id="seriesPanel">
+      <div class="series-head">
+        <label class="section-label">Performed Tests In Series</label>
+        <span class="series-id" id="seriesIdLabel">No active series</span>
+      </div>
+      <div id="seriesEmpty" class="series-empty">No tests recorded yet.</div>
+      <div id="seriesList" class="series-list"></div>
+    </section>
   </div>
 
   <script src="app.js"></script>

@@ -267,6 +267,11 @@ select.input {
   transform: translateY(1px);
 }
 
+.btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 .btn.strong {
   background: #79a9ff;
   color: #0d1930;
@@ -335,6 +340,103 @@ select.input {
   border-radius: 10px;
   color: #a9bee8;
   font-size: 14px;
+}
+
+.series-panel {
+  margin: 0 16px 16px;
+  padding: 14px;
+  border-radius: 14px;
+  background: var(--surface-2);
+}
+
+.series-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.series-head .section-label {
+  margin-bottom: 10px;
+}
+
+.series-id {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.series-empty {
+  color: var(--muted);
+  font-size: 14px;
+  background: #101a2c;
+  border-radius: 10px;
+  padding: 10px;
+}
+
+.series-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.series-row {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: 10px;
+  align-items: center;
+  background: #101a2c;
+  border-radius: 10px;
+  padding: 8px 10px;
+}
+
+.series-row input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+}
+
+.series-row-main {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.series-row-title {
+  color: var(--text);
+  font-size: 14px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.series-row-sub {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.series-badge {
+  border-radius: 999px;
+  padding: 4px 8px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  background: #22324f;
+  color: #c1d3f5;
+}
+
+.series-badge.running {
+  background: #2c3f65;
+  color: #d3e4ff;
+}
+
+.series-badge.finished {
+  background: #1f3a2a;
+  color: #aff0c7;
+}
+
+.series-badge.aborted {
+  background: #43282a;
+  color: #f1b9bc;
 }
 
 @media (max-width: 1200px) {
