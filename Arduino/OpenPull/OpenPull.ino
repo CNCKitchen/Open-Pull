@@ -464,6 +464,11 @@ void processCommand(char *line) {
     delayedStartPending = false;
     enterManualMode();
     emitAck("M11", "manual_mode");
+  } else if (strcmp(cmd, "M15") == 0) {
+    delayedStartPending = false;
+    enterManualMode();
+    emitStatus("ABORT", "emergency_stop");
+    emitAck("M15", "emergency_stop");
   } else if (strcmp(cmd, "M12") == 0) {
     performTare();
     emitAck("M12", "tare_ok");

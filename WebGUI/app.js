@@ -358,13 +358,50 @@ function resetMetricsDisplay() {
 }
 
 function normalizeTestStatus(status) {
-  if (status === 'aborded') {
-    return 'aborted';
+  if (status === 'manual_stop') {
+    return 'manual_stopped';
   }
-  if (status === 'running' || status === 'aborted' || status === 'finished') {
+  if (status === 'aborded') {
+    return 'manual_stopped';
+  }
+  if (status === 'aborted') {
+    return 'manual_stopped';
+  }
+  if (
+    status === 'running' ||
+    status === 'finished' ||
+    status === 'break_detected' ||
+    status === 'manual_stopped' ||
+    status === 'failed'
+  ) {
     return status;
   }
   return 'finished';
+}
+
+function mapCompletionReasonToStatus(reason) {
+  if (reason === 'break_detected') {
+    return 'break_detected';
+  }
+  if (reason === 'manual_stopped') {
+    return 'manual_stopped';
+  }
+  if (reason === 'failed') {
+    return 'failed';
+  }
+  if (reason === 'aborted') {
+    return 'manual_stopped';
+  }
+  return 'finished';
+}
+
+function getStatusLabel(status) {
+  if (status === 'break_detected') return 'AUTO BREAK';
+  if (status === 'manual_stopped') return 'MANUAL STOP';
+  if (status === 'failed') return 'FAILED';
+  if (status === 'running') return 'RUNNING';
+  if (status === 'finished') return 'FINISHED';
+  return String(status || '').replaceAll('_', ' ').toUpperCase();
 }
 
 function sanitizeIncomingLoad(loadN) {
@@ -669,7 +706,10 @@ function updateSeriesHeader() {
 
 function getTestStatusClass(status) {
   if (status === 'running') return 'running';
-  if (status === 'aborted') return 'aborted';
+  if (status === 'break_detected') return 'break-detected';
+  if (status === 'manual_stopped') return 'manual-stopped';
+  if (status === 'failed') return 'failed';
+  if (status === 'aborted') return 'manual-stopped';
   return 'finished';
 }
 
@@ -721,7 +761,7 @@ function renderSeriesList() {
 
     const badge = document.createElement('span');
     badge.className = `series-badge ${getTestStatusClass(test.status)}`;
-    badge.textContent = test.status;
+    badge.textContent = getStatusLabel(test.status);
 
     row.appendChild(checkbox);
     row.appendChild(rowMain);
@@ -825,7 +865,7 @@ function markActiveTestFinished(reason) {
     return;
   }
 
-  activeTest.status = reason === 'aborted' ? 'aborted' : 'finished';
+  activeTest.status = mapCompletionReasonToStatus(reason);
   activeTest.finishedAtIso = new Date().toISOString();
   activeTest.completionReason = reason;
   seriesState.readyForStart = false;
@@ -968,7 +1008,11 @@ function parseLine(line) {
     }
 
     if (code === 'ABORT') {
-      markActiveTestFinished('aborted');
+      markActiveTestFinished(message === 'emergency_stop' ? 'failed' : 'manual_stopped');
+    }
+
+    if (code === 'DONE' && message === 'specimen_break_detected') {
+      markActiveTestFinished('break_detected');
     }
     return;
   }
@@ -981,7 +1025,15 @@ function parseLine(line) {
     if (command === 'M11') {
       const activeTest = getActiveTest();
       if (isRunningTest(activeTest)) {
-        markActiveTestFinished('aborted');
+        markActiveTestFinished('manual_stopped');
+      }
+      lastIncomingMode = MANUAL_MODE_VALUE;
+    }
+
+    if (command === 'M15') {
+      const activeTest = getActiveTest();
+      if (isRunningTest(activeTest)) {
+        markActiveTestFinished('failed');
       }
       lastIncomingMode = MANUAL_MODE_VALUE;
     }
@@ -1268,7 +1320,7 @@ if (manualStopBtn) {
 }
 
 emergencyStopBtn.addEventListener('click', async () => {
-  await sendCommand('M11');
+  await sendCommand('M15');
   setStatus('emergency_stop');
 });
 

@@ -482,6 +482,21 @@ select.input {
   color: #f1b9bc;
 }
 
+.series-badge.manual-stopped {
+  background: #4a2f32;
+  color: #f4c3c6;
+}
+
+.series-badge.break-detected {
+  background: #3c3256;
+  color: #d3c7ff;
+}
+
+.series-badge.failed {
+  background: #5a1f1f;
+  color: #ffd3d3;
+}
+
 @media (max-width: 1200px) {
   .layout {
     grid-template-columns: 1fr;
