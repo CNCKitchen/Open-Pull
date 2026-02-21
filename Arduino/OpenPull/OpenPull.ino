@@ -48,6 +48,8 @@ const unsigned long accelUpdateIntervalUs = 5000UL;
 unsigned long sampleIntervalUs = 12500UL; // target 80 Hz stream
 const unsigned long hx711MissingDataTimeoutMs = 1500UL;
 const float hx711UpwardSpikeThresholdN = 300.0f;
+const uint8_t hx711MedianWindowSize = 5;
+const float preloadToleranceN = 0.15f;
 
 // Mode definitions
 const byte MODE_TEST_SLOW = 1;
@@ -73,6 +75,9 @@ float lastLoadValue = 0.0f;
 float lastRawLoadValue = 0.0f;
 bool hasLoadSample = false;
 bool hasFilteredLoadSample = false;
+float hx711RawWindow[hx711MedianWindowSize];
+uint8_t hx711RawWindowCount = 0;
+uint8_t hx711RawWindowIndex = 0;
 long zeroStepOffset = 0;
 long relativeMoveTargetStep = 0;
 float relativeMoveSpeedSps = 0.0f;
@@ -83,10 +88,9 @@ byte delayedStartMode = MODE_TEST_SLOW;
 byte delayedStartModeAddition = 0;
 const byte START_STAGE_WAIT_BEFORE_TARE = 0;
 const byte START_STAGE_WAIT_AFTER_TARE = 1;
-const byte START_STAGE_WAIT_AFTER_INITIAL_TARE = 2;
-const byte START_STAGE_PRELOAD_APPROACH = 3;
-const byte START_STAGE_WAIT_AFTER_PRELOAD = 4;
-const byte START_STAGE_WAIT_AFTER_SECOND_TARE = 5;
+const byte START_STAGE_PRELOAD_APPROACH = 2;
+const byte START_STAGE_WAIT_AFTER_PRELOAD = 3;
+const byte START_STAGE_WAIT_AFTER_SECOND_TARE = 4;
 unsigned long startTimeMs = 0;
 unsigned long lastSampleUs = 0;
 unsigned long lastAccelUpdateUs = 0;
@@ -115,6 +119,8 @@ void emitHx711NotReady();
 void loadConfigFromEeprom();
 void saveConfigToEeprom();
 void emitConfig();
+float computeMedian(const float *values, uint8_t count);
+float getMedianFilteredLoad(float measuredLoad);
 
 struct PersistedConfig {
   uint16_t magic;
@@ -367,8 +373,51 @@ void performTare() {
   hasFilteredLoadSample = false;
   lastLoadValue = 0.0f;
   lastRawLoadValue = 0.0f;
+  hx711RawWindowCount = 0;
+  hx711RawWindowIndex = 0;
   lastHx711DataMs = millis();
   digitalWrite(led1Pin, LOW);
+}
+
+float computeMedian(const float *values, uint8_t count) {
+  if (count == 0) {
+    return 0.0f;
+  }
+
+  float sorted[hx711MedianWindowSize];
+  for (uint8_t i = 0; i < count; i++) {
+    sorted[i] = values[i];
+  }
+
+  for (uint8_t i = 1; i < count; i++) {
+    float value = sorted[i];
+    int8_t j = (int8_t)i - 1;
+    while (j >= 0 && sorted[j] > value) {
+      sorted[j + 1] = sorted[j];
+      j--;
+    }
+    sorted[j + 1] = value;
+  }
+
+  if ((count & 0x01) == 1) {
+    return sorted[count / 2];
+  }
+  return 0.5f * (sorted[(count / 2) - 1] + sorted[count / 2]);
+}
+
+float getMedianFilteredLoad(float measuredLoad) {
+  hx711RawWindow[hx711RawWindowIndex] = measuredLoad;
+  hx711RawWindowIndex = (uint8_t)((hx711RawWindowIndex + 1) % hx711MedianWindowSize);
+  if (hx711RawWindowCount < hx711MedianWindowSize) {
+    hx711RawWindowCount++;
+  }
+
+  float orderedWindow[hx711MedianWindowSize];
+  for (uint8_t i = 0; i < hx711RawWindowCount; i++) {
+    uint8_t sourceIndex = (uint8_t)((hx711RawWindowIndex + hx711MedianWindowSize - hx711RawWindowCount + i) % hx711MedianWindowSize);
+    orderedWindow[i] = hx711RawWindow[sourceIndex];
+  }
+  return computeMedian(orderedWindow, hx711RawWindowCount);
 }
 
 void processSerial() {
@@ -400,17 +449,13 @@ void processCommand(char *line) {
 
   if (strcmp(cmd, "M10") == 0) {
     delayedStartPending = true;
-    delayedStartStage = (preloadN > 0.0f) ? START_STAGE_WAIT_AFTER_INITIAL_TARE : START_STAGE_WAIT_BEFORE_TARE;
+    delayedStartStage = (preloadN > 0.0f) ? START_STAGE_PRELOAD_APPROACH : START_STAGE_WAIT_BEFORE_TARE;
     delayedStartStageMs = millis();
     delayedStartMode = MODE_TEST_SLOW;
     delayedStartModeAddition = (arg1 != NULL && strcmp(arg1, "S1") == 0) ? 1 : 0;
     mode = MODE_MANUAL;
     targetSpeedSps = 0.0f;
-    if (preloadN > 0.0f) {
-      performTare();
-      emitStatus("MODE", "preload_tare_done");
-    }
-    emitAck("M10", "start_slow_test_pending_tare");
+    emitAck("M10", (preloadN > 0.0f) ? "start_slow_test_pending_preload" : "start_slow_test_pending_tare");
   } else if (strcmp(cmd, "M11") == 0) {
     delayedStartPending = false;
     enterManualMode();
@@ -589,24 +634,25 @@ void updateModeAndTargets() {
       }
     }
 
-    if (delayedStartStage == START_STAGE_WAIT_AFTER_INITIAL_TARE) {
-      if ((unsigned long)(nowMs - delayedStartStageMs) >= 500UL) {
-        delayedStartStage = START_STAGE_PRELOAD_APPROACH;
-      } else {
+    if (delayedStartStage == START_STAGE_PRELOAD_APPROACH) {
+      if (!hasFilteredLoadSample) {
         targetSpeedSps = 0.0f;
         return;
       }
-    }
 
-    if (delayedStartStage == START_STAGE_PRELOAD_APPROACH) {
-      if (lastLoadValue >= preloadN) {
+      float preloadErrorN = preloadN - lastLoadValue;
+      if (fabs(preloadErrorN) <= preloadToleranceN) {
         targetSpeedSps = 0.0f;
         if (currentSpeedSps < 0.5f) {
           delayedStartStage = START_STAGE_WAIT_AFTER_PRELOAD;
           delayedStartStageMs = nowMs;
         }
       } else {
-        setDirectionLow(true);
+        if (preloadErrorN > 0.0f) {
+          setDirectionLow(true);
+        } else {
+          setDirectionLow(false);
+        }
         targetSpeedSps = jogSlowSps;
       }
       return;
@@ -790,6 +836,7 @@ void sampleAndStream() {
   float loadValue = lastLoadValue;
   if (loadCell.is_ready()) {
     float measuredLoad = ((float)loadCell.read_average(1) - (float)tareValue) / gainValue;
+    measuredLoad = getMedianFilteredLoad(measuredLoad);
     if (hasLoadSample) {
       float deltaLoad = measuredLoad - lastRawLoadValue;
       if (deltaLoad > hx711UpwardSpikeThresholdN) {
