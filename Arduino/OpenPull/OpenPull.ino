@@ -9,6 +9,7 @@
   ########################################*/
 
 #include <HX711.h>
+#include <EEPROM.h>
 #include <string.h>
 #include <stdlib.h>
 #include <math.h>
@@ -71,6 +72,11 @@ bool hasLoadSample = false;
 long zeroStepOffset = 0;
 long relativeMoveTargetStep = 0;
 float relativeMoveSpeedSps = 0.0f;
+bool delayedStartPending = false;
+byte delayedStartStage = 0;
+unsigned long delayedStartStageMs = 0;
+byte delayedStartMode = MODE_TEST_SLOW;
+byte delayedStartModeAddition = 0;
 unsigned long startTimeMs = 0;
 unsigned long lastSampleUs = 0;
 unsigned long lastAccelUpdateUs = 0;
@@ -96,6 +102,24 @@ void sampleAndStream();
 float getDisplacementMm();
 void performTare();
 void emitHx711NotReady();
+void loadConfigFromEeprom();
+void saveConfigToEeprom();
+void emitConfig();
+
+struct PersistedConfig {
+  uint16_t magic;
+  uint8_t version;
+  float slowMmPerMin;
+  float fastMmPerMin;
+  float accelMmPerS2;
+  float gain;
+  float sampleRateHz;
+  float manualSlowMmPerMin;
+  float manualFastMmPerMin;
+};
+
+const uint16_t persistedConfigMagic = 0x504FULL;
+const uint8_t persistedConfigVersion = 1;
 
 ISR(TIMER1_COMPA_vect) {
   if (!motionEnabled) {
@@ -131,12 +155,88 @@ void setup() {
   digitalWrite(led1Pin, LOW);
 
   loadCell.begin(A0, A1);
+  loadConfigFromEeprom();
   lastHx711DataMs = millis();
   setupTimer1();
   performTare();
   lastAccelUpdateUs = micros();
   lastSampleUs = micros();
   emitStatus("BOOT", "ready");
+}
+
+void saveConfigToEeprom() {
+  PersistedConfig config;
+  config.magic = persistedConfigMagic;
+  config.version = persistedConfigVersion;
+  config.slowMmPerMin = (slowTestSps / stepsPerMM) * 60.0f;
+  config.fastMmPerMin = (fastTestSps / stepsPerMM) * 60.0f;
+  config.accelMmPerS2 = accelSps2 / stepsPerMM;
+  config.gain = gainValue;
+  config.sampleRateHz = 1000000.0f / (float)sampleIntervalUs;
+  config.manualSlowMmPerMin = (jogSlowSps / stepsPerMM) * 60.0f;
+  config.manualFastMmPerMin = (jogFastSps / stepsPerMM) * 60.0f;
+  EEPROM.put(0, config);
+}
+
+void loadConfigFromEeprom() {
+  PersistedConfig config;
+  EEPROM.get(0, config);
+
+  if (config.magic != persistedConfigMagic || config.version != persistedConfigVersion) {
+    saveConfigToEeprom();
+    return;
+  }
+
+  if (isfinite(config.slowMmPerMin) && config.slowMmPerMin > 0.01f) {
+    slowTestSps = (config.slowMmPerMin / 60.0f) * stepsPerMM;
+  }
+
+  if (isfinite(config.fastMmPerMin) && config.fastMmPerMin > 0.01f) {
+    fastTestSps = (config.fastMmPerMin / 60.0f) * stepsPerMM;
+  }
+
+  if (isfinite(config.accelMmPerS2) && config.accelMmPerS2 > 0.01f) {
+    accelSps2 = config.accelMmPerS2 * stepsPerMM;
+  }
+
+  if (isfinite(config.gain) && config.gain != 0.0f) {
+    gainValue = config.gain;
+  }
+
+  if (isfinite(config.sampleRateHz) && config.sampleRateHz > 0.1f) {
+    unsigned long intervalUs = (unsigned long)(1000000.0f / config.sampleRateHz);
+    if (intervalUs < 1000UL) {
+      intervalUs = 1000UL;
+    }
+    sampleIntervalUs = intervalUs;
+  }
+
+  if (isfinite(config.manualSlowMmPerMin) && config.manualSlowMmPerMin > 0.01f) {
+    jogSlowSps = (config.manualSlowMmPerMin / 60.0f) * stepsPerMM;
+  }
+
+  if (isfinite(config.manualFastMmPerMin) && config.manualFastMmPerMin > 0.01f) {
+    jogFastSps = (config.manualFastMmPerMin / 60.0f) * stepsPerMM;
+  }
+}
+
+void emitConfig() {
+  Serial.print("CFG,");
+  Serial.print(millis());
+  Serial.print(',');
+  Serial.print((slowTestSps / stepsPerMM) * 60.0f, 3);
+  Serial.print(',');
+  Serial.print((fastTestSps / stepsPerMM) * 60.0f, 3);
+  Serial.print(',');
+  Serial.print(accelSps2 / stepsPerMM, 3);
+  Serial.print(',');
+  Serial.print(gainValue, 3);
+  Serial.print(',');
+  Serial.print(1000000.0f / (float)sampleIntervalUs, 3);
+  Serial.print(',');
+  Serial.print((jogSlowSps / stepsPerMM) * 60.0f, 3);
+  Serial.print(',');
+  Serial.println((jogFastSps / stepsPerMM) * 60.0f, 3);
 }
 
 void loop() {
@@ -265,14 +365,16 @@ void processCommand(char *line) {
   }
 
   if (strcmp(cmd, "M10") == 0) {
-    mode = MODE_TEST_SLOW;
-    modeAddition = (arg1 != NULL && strcmp(arg1, "S1") == 0) ? 1 : 0;
-    maxForce = 0.0f;
-    loweringCounter = 0.0f;
-    setDirectionLow(true);
-    performTare();
-    emitAck("M10", "start_slow_test");
+    delayedStartPending = true;
+    delayedStartStage = 0;
+    delayedStartStageMs = millis();
+    delayedStartMode = MODE_TEST_SLOW;
+    delayedStartModeAddition = (arg1 != NULL && strcmp(arg1, "S1") == 0) ? 1 : 0;
+    mode = MODE_MANUAL;
+    targetSpeedSps = 0.0f;
+    emitAck("M10", "start_slow_test_pending_tare");
   } else if (strcmp(cmd, "M11") == 0) {
+    delayedStartPending = false;
     enterManualMode();
     emitAck("M11", "manual_mode");
   } else if (strcmp(cmd, "M12") == 0) {
@@ -325,6 +427,7 @@ void processCommand(char *line) {
     float mmPerMin = atof(arg1);
     if (mmPerMin > 0.01f) {
       slowTestSps = (mmPerMin / 60.0f) * stepsPerMM;
+      saveConfigToEeprom();
       emitAck("M40", "slow_speed_set");
     } else {
       emitStatus("ERR", "invalid_slow_speed");
@@ -333,6 +436,7 @@ void processCommand(char *line) {
     float mmPerMin = atof(arg1);
     if (mmPerMin > 0.01f) {
       fastTestSps = (mmPerMin / 60.0f) * stepsPerMM;
+      saveConfigToEeprom();
       emitAck("M41", "fast_speed_set");
     } else {
       emitStatus("ERR", "invalid_fast_speed");
@@ -341,6 +445,7 @@ void processCommand(char *line) {
     float accelMmPerS2 = atof(arg1);
     if (accelMmPerS2 > 0.01f) {
       accelSps2 = accelMmPerS2 * stepsPerMM;
+      saveConfigToEeprom();
       emitAck("M42", "accel_set");
     } else {
       emitStatus("ERR", "invalid_accel");
@@ -349,6 +454,7 @@ void processCommand(char *line) {
     float newGain = atof(arg1);
     if (newGain != 0.0f) {
       gainValue = newGain;
+      saveConfigToEeprom();
       emitAck("M43", "gain_set");
     } else {
       emitStatus("ERR", "invalid_gain");
@@ -361,6 +467,7 @@ void processCommand(char *line) {
         newIntervalUs = 1000UL;
       }
       sampleIntervalUs = newIntervalUs;
+      saveConfigToEeprom();
       emitAck("M44", "sample_rate_set");
     } else {
       emitStatus("ERR", "invalid_sample_rate");
@@ -369,6 +476,7 @@ void processCommand(char *line) {
     float mmPerMin = atof(arg1);
     if (mmPerMin > 0.01f) {
       jogSlowSps = (mmPerMin / 60.0f) * stepsPerMM;
+      saveConfigToEeprom();
       emitAck("M45", "manual_slow_speed_set");
     } else {
       emitStatus("ERR", "invalid_manual_slow_speed");
@@ -377,16 +485,48 @@ void processCommand(char *line) {
     float mmPerMin = atof(arg1);
     if (mmPerMin > 0.01f) {
       jogFastSps = (mmPerMin / 60.0f) * stepsPerMM;
+      saveConfigToEeprom();
       emitAck("M46", "manual_fast_speed_set");
     } else {
       emitStatus("ERR", "invalid_manual_fast_speed");
     }
+  } else if (strcmp(cmd, "M50") == 0) {
+    emitConfig();
+    emitAck("M50", "config_reported");
   } else {
     emitStatus("ERR", "unknown_command");
   }
 }
 
 void updateModeAndTargets() {
+  if (delayedStartPending) {
+    unsigned long nowMs = millis();
+
+    if (delayedStartStage == 0) {
+      if ((unsigned long)(nowMs - delayedStartStageMs) >= 500UL) {
+        performTare();
+        delayedStartStage = 1;
+        delayedStartStageMs = nowMs;
+      }
+      targetSpeedSps = 0.0f;
+      return;
+    }
+
+    if (delayedStartStage == 1) {
+      if ((unsigned long)(nowMs - delayedStartStageMs) >= 500UL) {
+        delayedStartPending = false;
+        mode = delayedStartMode;
+        modeAddition = delayedStartModeAddition;
+        maxForce = 0.0f;
+        loweringCounter = 0.0f;
+        setDirectionLow(true);
+      } else {
+        targetSpeedSps = 0.0f;
+        return;
+      }
+    }
+  }
+
   if (mode == MODE_TEST_SLOW) {
     setDirectionLow(true);
     targetSpeedSps = slowTestSps;
@@ -436,10 +576,10 @@ void updateModeAndTargets() {
 
     if (delta > 0) {
       setDirectionLow(true);
-      targetSpeedSps = gotoZeroSps;
+      targetSpeedSps = fastTestSps;
     } else if (delta < 0) {
       setDirectionLow(false);
-      targetSpeedSps = gotoZeroSps;
+      targetSpeedSps = fastTestSps;
     } else {
       targetSpeedSps = 0.0f;
       enterManualMode();

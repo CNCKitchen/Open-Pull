@@ -241,6 +241,7 @@ select.input {
 }
 
 .config-section .inline-input {
+  grid-template-columns: 88px minmax(0, 1fr);
   margin-top: 8px;
   margin-bottom: 0;
 }

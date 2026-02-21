@@ -765,6 +765,55 @@ function appendDataToActiveTest(sample) {
   schedulePersistState();
 }
 
+function applyMachineConfigFromParts(parts) {
+  if (parts.length < 9) {
+    return;
+  }
+
+  const slowMmPerMin = parseFloat(parts[2]);
+  const fastMmPerMin = parseFloat(parts[3]);
+  const accelMmPerS2 = parseFloat(parts[4]);
+  const gain = parseFloat(parts[5]);
+  const sampleRateHz = parseFloat(parts[6]);
+  const manualSlowMmPerMin = parseFloat(parts[7]);
+  const manualFastMmPerMin = parseFloat(parts[8]);
+
+  if (Number.isFinite(accelMmPerS2) && accelInputEl) {
+    accelInputEl.value = accelMmPerS2.toFixed(1);
+  }
+
+  if (Number.isFinite(gain) && gainInputEl) {
+    gainInputEl.value = gain.toFixed(3);
+  }
+
+  if (Number.isFinite(sampleRateHz) && sampleRateInputEl) {
+    sampleRateInputEl.value = sampleRateHz.toFixed(1);
+  }
+
+  if (Number.isFinite(manualSlowMmPerMin) && manualSlowInputEl) {
+    manualSlowInputEl.value = manualSlowMmPerMin.toFixed(1);
+  }
+
+  if (Number.isFinite(manualFastMmPerMin) && manualFastInputEl) {
+    manualFastInputEl.value = manualFastMmPerMin.toFixed(1);
+  }
+
+  if (Number.isFinite(slowMmPerMin) && speedInputEl) {
+    const roundedSlow = Math.round(slowMmPerMin);
+    const allowedSpeedValues = new Set(['1', '2', '5', '10', '50']);
+    const roundedSlowString = String(roundedSlow);
+    if (allowedSpeedValues.has(roundedSlowString)) {
+      speedInputEl.value = roundedSlowString;
+    }
+  }
+
+  if (Number.isFinite(fastMmPerMin)) {
+    setStatus(`machine_config_loaded fast=${fastMmPerMin.toFixed(1)}mm_min`);
+  } else {
+    setStatus('machine_config_loaded');
+  }
+}
+
 function parseLine(line) {
   const trimmed = line.trim();
   if (!trimmed) return;
@@ -831,6 +880,11 @@ function parseLine(line) {
     return;
   }
 
+  if (tag === 'CFG' && parts.length >= 9) {
+    applyMachineConfigFromParts(parts);
+    return;
+  }
+
   setStatus(trimmed);
 }
 
@@ -884,6 +938,7 @@ async function connectSerial() {
     updateStartButtonState();
     setStatus('connected');
     readSerialLoop();
+    await sendCommand('M50');
   } catch (error) {
     setStatus(`connect_error ${error.message}`);
   }
