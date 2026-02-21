@@ -50,6 +50,9 @@ const unsigned long hx711MissingDataTimeoutMs = 1500UL;
 const float hx711UpwardSpikeThresholdN = 300.0f;
 const uint8_t hx711MedianWindowSize = 5;
 const float preloadToleranceN = 0.15f;
+const float breakDetectNegativeThresholdN = -0.20f;
+const uint8_t breakDetectConsecutiveSamples = 10;
+const float breakDetectMinPeakForceN = 0.50f;
 
 // Mode definitions
 const byte MODE_TEST_SLOW = 1;
@@ -81,6 +84,7 @@ uint8_t hx711RawWindowIndex = 0;
 long zeroStepOffset = 0;
 long relativeMoveTargetStep = 0;
 float relativeMoveSpeedSps = 0.0f;
+uint8_t negativeLoadStreak = 0;
 bool delayedStartPending = false;
 byte delayedStartStage = 0;
 unsigned long delayedStartStageMs = 0;
@@ -880,6 +884,25 @@ void sampleAndStream() {
     if (loadValue > maxForce) {
       maxForce = loadValue;
     }
+  }
+
+  bool inActiveTest = (mode == MODE_TEST_SLOW || mode == MODE_TEST_FAST || mode == MODE_YOUNGS);
+  if (inActiveTest) {
+    if (maxForce >= breakDetectMinPeakForceN && loadValue <= breakDetectNegativeThresholdN) {
+      if (negativeLoadStreak < 255) {
+        negativeLoadStreak++;
+      }
+    } else {
+      negativeLoadStreak = 0;
+    }
+
+    if (negativeLoadStreak >= breakDetectConsecutiveSamples) {
+      emitStatus("DONE", "specimen_break_detected");
+      negativeLoadStreak = 0;
+      enterManualMode();
+    }
+  } else {
+    negativeLoadStreak = 0;
   }
 
   long positionSnapshot;
