@@ -18,6 +18,8 @@ const diameterInputEl = document.getElementById('diameterInput');
 const stressCardEl = document.getElementById('stressCard');
 const sampleNameEl = document.getElementById('sampleName');
 const sampleCommentEl = document.getElementById('sampleComment');
+const preloadInputEl = document.getElementById('preloadInput');
+const alphaInputEl = document.getElementById('alphaInput');
 const sampleRateInputEl = document.getElementById('sampleRateInput');
 const manualSlowInputEl = document.getElementById('manualSlowInput');
 const manualFastInputEl = document.getElementById('manualFastInput');
@@ -32,6 +34,8 @@ const tareBtn = document.getElementById('tareBtn');
 const setZeroBtn = document.getElementById('setZeroBtn');
 const gotoZeroBtn = document.getElementById('gotoZeroBtn');
 const exportBtn = document.getElementById('exportBtn');
+const setPreloadBtn = document.getElementById('setPreloadBtn');
+const setAlphaBtn = document.getElementById('setAlphaBtn');
 const setSampleRateBtn = document.getElementById('setSampleRateBtn');
 const setManualSlowBtn = document.getElementById('setManualSlowBtn');
 const setManualFastBtn = document.getElementById('setManualFastBtn');
@@ -854,7 +858,7 @@ function appendDataToActiveTest(sample) {
 }
 
 function applyMachineConfigFromParts(parts) {
-  if (parts.length < 9) {
+  if (parts.length < 11) {
     return;
   }
 
@@ -865,6 +869,16 @@ function applyMachineConfigFromParts(parts) {
   const sampleRateHz = parseFlexibleNumber(parts[6]);
   const manualSlowMmPerMin = parseFlexibleNumber(parts[7]);
   const manualFastMmPerMin = parseFlexibleNumber(parts[8]);
+  const preloadN = parseFlexibleNumber(parts[9]);
+  const alpha = parseFlexibleNumber(parts[10]);
+
+  if (Number.isFinite(preloadN) && preloadInputEl) {
+    preloadInputEl.value = preloadN.toFixed(1);
+  }
+
+  if (Number.isFinite(alpha) && alphaInputEl && alpha > 0 && alpha <= 1) {
+    alphaInputEl.value = alpha.toFixed(2);
+  }
 
   if (Number.isFinite(accelMmPerS2) && accelInputEl) {
     accelInputEl.value = accelMmPerS2.toFixed(1);
@@ -974,7 +988,7 @@ function parseLine(line) {
     return;
   }
 
-  if (tag === 'CFG' && parts.length >= 9) {
+  if (tag === 'CFG' && parts.length >= 11) {
     applyMachineConfigFromParts(parts);
     return;
   }
@@ -1240,7 +1254,6 @@ startTestBtn.addEventListener('click', async () => {
   schedulePersistState();
   refreshUi();
 
-  await sendCommand('M12');
   await sendCommand(`M42 ${accelMmPerS2.toFixed(1)}`);
   await sendCommand(`M40 ${roundedSpeed.toFixed(1)}`);
   await sendCommand('M10');
@@ -1301,6 +1314,32 @@ if (setSampleRateBtn && sampleRateInputEl) {
       return;
     }
     await sendCommand(`M44 ${sampleRateHz.toFixed(1)}`);
+  });
+}
+
+if (setPreloadBtn && preloadInputEl) {
+  setPreloadBtn.addEventListener('click', async () => {
+    const preloadN = parseFlexibleNumber(preloadInputEl.value);
+    if (!Number.isFinite(preloadN) || preloadN < 0) {
+      setStatus('invalid_preload');
+      return;
+    }
+    const roundedPreloadN = Number(preloadN.toFixed(1));
+    preloadInputEl.value = roundedPreloadN.toFixed(1);
+    await sendCommand(`M47 ${roundedPreloadN.toFixed(1)}`);
+  });
+}
+
+if (setAlphaBtn && alphaInputEl) {
+  setAlphaBtn.addEventListener('click', async () => {
+    const alpha = parseFlexibleNumber(alphaInputEl.value);
+    if (!Number.isFinite(alpha) || alpha <= 0 || alpha > 1) {
+      setStatus('invalid_alpha');
+      return;
+    }
+    const roundedAlpha = Number(alpha.toFixed(2));
+    alphaInputEl.value = roundedAlpha.toFixed(2);
+    await sendCommand(`M48 ${roundedAlpha.toFixed(2)}`);
   });
 }
 

@@ -39,6 +39,8 @@ float slowTestSps = baseTestSpeedSps;
 float fastTestSps = 25.0f * baseTestSpeedSps; // 25 mm/min
 float accelSps2 = 4000.0f;
 float gotoZeroSps = 8.0f * baseTestSpeedSps;
+float preloadN = 2.0f;
+float loadFilterAlpha = 0.20f;
 
 // Timing
 const unsigned long yMTestTimeMs = 30000UL;
@@ -68,7 +70,9 @@ float currentSpeedSps = 0.0f;
 float maxForce = 0.0f;
 float loweringCounter = 0.0f;
 float lastLoadValue = 0.0f;
+float lastRawLoadValue = 0.0f;
 bool hasLoadSample = false;
+bool hasFilteredLoadSample = false;
 long zeroStepOffset = 0;
 long relativeMoveTargetStep = 0;
 float relativeMoveSpeedSps = 0.0f;
@@ -77,6 +81,12 @@ byte delayedStartStage = 0;
 unsigned long delayedStartStageMs = 0;
 byte delayedStartMode = MODE_TEST_SLOW;
 byte delayedStartModeAddition = 0;
+const byte START_STAGE_WAIT_BEFORE_TARE = 0;
+const byte START_STAGE_WAIT_AFTER_TARE = 1;
+const byte START_STAGE_WAIT_AFTER_INITIAL_TARE = 2;
+const byte START_STAGE_PRELOAD_APPROACH = 3;
+const byte START_STAGE_WAIT_AFTER_PRELOAD = 4;
+const byte START_STAGE_WAIT_AFTER_SECOND_TARE = 5;
 unsigned long startTimeMs = 0;
 unsigned long lastSampleUs = 0;
 unsigned long lastAccelUpdateUs = 0;
@@ -116,10 +126,12 @@ struct PersistedConfig {
   float sampleRateHz;
   float manualSlowMmPerMin;
   float manualFastMmPerMin;
+  float preloadN;
+  float loadFilterAlpha;
 };
 
 const uint16_t persistedConfigMagic = 0x504FULL;
-const uint8_t persistedConfigVersion = 1;
+const uint8_t persistedConfigVersion = 2;
 
 ISR(TIMER1_COMPA_vect) {
   if (!motionEnabled) {
@@ -175,6 +187,8 @@ void saveConfigToEeprom() {
   config.sampleRateHz = 1000000.0f / (float)sampleIntervalUs;
   config.manualSlowMmPerMin = (jogSlowSps / stepsPerMM) * 60.0f;
   config.manualFastMmPerMin = (jogFastSps / stepsPerMM) * 60.0f;
+  config.preloadN = preloadN;
+  config.loadFilterAlpha = loadFilterAlpha;
   EEPROM.put(0, config);
 }
 
@@ -218,6 +232,14 @@ void loadConfigFromEeprom() {
   if (isfinite(config.manualFastMmPerMin) && config.manualFastMmPerMin > 0.01f) {
     jogFastSps = (config.manualFastMmPerMin / 60.0f) * stepsPerMM;
   }
+
+  if (isfinite(config.preloadN) && config.preloadN >= 0.0f) {
+    preloadN = config.preloadN;
+  }
+
+  if (isfinite(config.loadFilterAlpha) && config.loadFilterAlpha > 0.0f && config.loadFilterAlpha <= 1.0f) {
+    loadFilterAlpha = config.loadFilterAlpha;
+  }
 }
 
 void emitConfig() {
@@ -236,7 +258,11 @@ void emitConfig() {
   Serial.print(',');
   Serial.print((jogSlowSps / stepsPerMM) * 60.0f, 3);
   Serial.print(',');
-  Serial.println((jogFastSps / stepsPerMM) * 60.0f, 3);
+  Serial.print((jogFastSps / stepsPerMM) * 60.0f, 3);
+  Serial.print(',');
+  Serial.print(preloadN, 3);
+  Serial.print(',');
+  Serial.println(loadFilterAlpha, 3);
 }
 
 void loop() {
@@ -327,12 +353,20 @@ void emitHx711NotReady() {
 
 void performTare() {
   digitalWrite(led1Pin, HIGH);
-  if (!loadCell.is_ready()) {
-    emitHx711NotReady();
-    digitalWrite(led1Pin, LOW);
-    return;
+  unsigned long tareStartMs = millis();
+  while (!loadCell.is_ready()) {
+    if ((unsigned long)(millis() - tareStartMs) >= 500UL) {
+      emitStatus("ERR", "tare_timeout");
+      digitalWrite(led1Pin, LOW);
+      return;
+    }
+    delay(5);
   }
   tareValue = loadCell.read_average(32);
+  hasLoadSample = false;
+  hasFilteredLoadSample = false;
+  lastLoadValue = 0.0f;
+  lastRawLoadValue = 0.0f;
   lastHx711DataMs = millis();
   digitalWrite(led1Pin, LOW);
 }
@@ -366,12 +400,16 @@ void processCommand(char *line) {
 
   if (strcmp(cmd, "M10") == 0) {
     delayedStartPending = true;
-    delayedStartStage = 0;
+    delayedStartStage = (preloadN > 0.0f) ? START_STAGE_WAIT_AFTER_INITIAL_TARE : START_STAGE_WAIT_BEFORE_TARE;
     delayedStartStageMs = millis();
     delayedStartMode = MODE_TEST_SLOW;
     delayedStartModeAddition = (arg1 != NULL && strcmp(arg1, "S1") == 0) ? 1 : 0;
     mode = MODE_MANUAL;
     targetSpeedSps = 0.0f;
+    if (preloadN > 0.0f) {
+      performTare();
+      emitStatus("MODE", "preload_tare_done");
+    }
     emitAck("M10", "start_slow_test_pending_tare");
   } else if (strcmp(cmd, "M11") == 0) {
     delayedStartPending = false;
@@ -490,6 +528,24 @@ void processCommand(char *line) {
     } else {
       emitStatus("ERR", "invalid_manual_fast_speed");
     }
+  } else if (strcmp(cmd, "M47") == 0 && arg1 != NULL) {
+    float configuredPreloadN = atof(arg1);
+    if (configuredPreloadN >= 0.0f) {
+      preloadN = configuredPreloadN;
+      saveConfigToEeprom();
+      emitAck("M47", "preload_set");
+    } else {
+      emitStatus("ERR", "invalid_preload");
+    }
+  } else if (strcmp(cmd, "M48") == 0 && arg1 != NULL) {
+    float configuredAlpha = atof(arg1);
+    if (configuredAlpha > 0.0f && configuredAlpha <= 1.0f) {
+      loadFilterAlpha = configuredAlpha;
+      saveConfigToEeprom();
+      emitAck("M48", "filter_alpha_set");
+    } else {
+      emitStatus("ERR", "invalid_filter_alpha");
+    }
   } else if (strcmp(cmd, "M50") == 0) {
     emitConfig();
     emitAck("M50", "config_reported");
@@ -502,17 +558,71 @@ void updateModeAndTargets() {
   if (delayedStartPending) {
     unsigned long nowMs = millis();
 
-    if (delayedStartStage == 0) {
+    if (!digitalRead(downPin)) {
+      emitStatus("ABORT", "start_sequence_stopped");
+      delayedStartPending = false;
+      enterManualMode();
+      return;
+    }
+
+    if (delayedStartStage == START_STAGE_WAIT_BEFORE_TARE) {
       if ((unsigned long)(nowMs - delayedStartStageMs) >= 500UL) {
         performTare();
-        delayedStartStage = 1;
+        delayedStartStage = START_STAGE_WAIT_AFTER_TARE;
         delayedStartStageMs = nowMs;
       }
       targetSpeedSps = 0.0f;
       return;
     }
 
-    if (delayedStartStage == 1) {
+    if (delayedStartStage == START_STAGE_WAIT_AFTER_TARE) {
+      if ((unsigned long)(nowMs - delayedStartStageMs) >= 500UL) {
+        delayedStartPending = false;
+        mode = delayedStartMode;
+        modeAddition = delayedStartModeAddition;
+        maxForce = 0.0f;
+        loweringCounter = 0.0f;
+        setDirectionLow(true);
+      } else {
+        targetSpeedSps = 0.0f;
+        return;
+      }
+    }
+
+    if (delayedStartStage == START_STAGE_WAIT_AFTER_INITIAL_TARE) {
+      if ((unsigned long)(nowMs - delayedStartStageMs) >= 500UL) {
+        delayedStartStage = START_STAGE_PRELOAD_APPROACH;
+      } else {
+        targetSpeedSps = 0.0f;
+        return;
+      }
+    }
+
+    if (delayedStartStage == START_STAGE_PRELOAD_APPROACH) {
+      if (lastLoadValue >= preloadN) {
+        targetSpeedSps = 0.0f;
+        if (currentSpeedSps < 0.5f) {
+          delayedStartStage = START_STAGE_WAIT_AFTER_PRELOAD;
+          delayedStartStageMs = nowMs;
+        }
+      } else {
+        setDirectionLow(true);
+        targetSpeedSps = jogSlowSps;
+      }
+      return;
+    }
+
+    if (delayedStartStage == START_STAGE_WAIT_AFTER_PRELOAD) {
+      if ((unsigned long)(nowMs - delayedStartStageMs) >= 500UL) {
+        performTare();
+        delayedStartStage = START_STAGE_WAIT_AFTER_SECOND_TARE;
+        delayedStartStageMs = nowMs;
+      }
+      targetSpeedSps = 0.0f;
+      return;
+    }
+
+    if (delayedStartStage == START_STAGE_WAIT_AFTER_SECOND_TARE) {
       if ((unsigned long)(nowMs - delayedStartStageMs) >= 500UL) {
         delayedStartPending = false;
         mode = delayedStartMode;
@@ -681,14 +791,25 @@ void sampleAndStream() {
   if (loadCell.is_ready()) {
     float measuredLoad = ((float)loadCell.read_average(1) - (float)tareValue) / gainValue;
     if (hasLoadSample) {
-      float upwardJump = measuredLoad - lastLoadValue;
-      if (upwardJump > hx711UpwardSpikeThresholdN) {
-        measuredLoad = lastLoadValue;
+      float deltaLoad = measuredLoad - lastRawLoadValue;
+      if (deltaLoad > hx711UpwardSpikeThresholdN) {
+        measuredLoad = lastRawLoadValue + hx711UpwardSpikeThresholdN;
+      } else if (deltaLoad < -hx711UpwardSpikeThresholdN) {
+        measuredLoad = lastRawLoadValue - hx711UpwardSpikeThresholdN;
       }
     } else {
       hasLoadSample = true;
     }
-    loadValue = measuredLoad;
+
+    lastRawLoadValue = measuredLoad;
+
+    if (!hasFilteredLoadSample) {
+      loadValue = measuredLoad;
+      hasFilteredLoadSample = true;
+    } else {
+      loadValue = lastLoadValue + loadFilterAlpha * (measuredLoad - lastLoadValue);
+    }
+
     lastLoadValue = loadValue;
     lastHx711DataMs = millis();
   } else {
