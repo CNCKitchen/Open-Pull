@@ -17,6 +17,9 @@ const diameterInputEl = document.getElementById('diameterInput');
 const stressCardEl = document.getElementById('stressCard');
 const sampleNameEl = document.getElementById('sampleName');
 const sampleCommentEl = document.getElementById('sampleComment');
+const sampleRateInputEl = document.getElementById('sampleRateInput');
+const manualSlowInputEl = document.getElementById('manualSlowInput');
+const manualFastInputEl = document.getElementById('manualFastInput');
 const accelInputEl = document.getElementById('accelInput');
 const gainInputEl = document.getElementById('gainInput');
 
@@ -28,8 +31,17 @@ const tareBtn = document.getElementById('tareBtn');
 const setZeroBtn = document.getElementById('setZeroBtn');
 const gotoZeroBtn = document.getElementById('gotoZeroBtn');
 const exportBtn = document.getElementById('exportBtn');
+const setSampleRateBtn = document.getElementById('setSampleRateBtn');
+const setManualSlowBtn = document.getElementById('setManualSlowBtn');
+const setManualFastBtn = document.getElementById('setManualFastBtn');
 const setAccelBtn = document.getElementById('setAccelBtn');
 const setGainBtn = document.getElementById('setGainBtn');
+const jogPlus10Btn = document.getElementById('jogPlus10Btn');
+const jogPlus1Btn = document.getElementById('jogPlus1Btn');
+const jogPlus01Btn = document.getElementById('jogPlus01Btn');
+const jogMinus01Btn = document.getElementById('jogMinus01Btn');
+const jogMinus1Btn = document.getElementById('jogMinus1Btn');
+const jogMinus10Btn = document.getElementById('jogMinus10Btn');
 
 const seriesIdLabelEl = document.getElementById('seriesIdLabel');
 const seriesEmptyEl = document.getElementById('seriesEmpty');
@@ -43,6 +55,7 @@ const TEST_MODE_VALUES = new Set([1, 3, 4]);
 const MANUAL_MODE_VALUE = 2;
 const MAX_SAMPLES_PER_TEST = 5000;
 const OVERLAY_COLORS = ['#ff9f6c', '#8ce99a', '#d0a6ff', '#6ee7ff', '#ffd166', '#ff8fab'];
+const LOAD_SPIKE_JUMP_THRESHOLD_N = 300;
 
 let serialPort = null;
 let serialReader = null;
@@ -53,6 +66,7 @@ let writableStreamClosed = null;
 
 let persistTimeoutId = null;
 let lastIncomingMode = MANUAL_MODE_VALUE;
+let lastAcceptedLoadN = null;
 
 const seriesState = {
   version: 1,
@@ -169,6 +183,10 @@ function getValidationErrors() {
   const sampleName = (sampleNameEl.value || '').trim();
   const meta = getGeometryFromInputs();
 
+  if (!serialWriter) {
+    errors.push('connect interface first');
+  }
+
   if (!seriesState.seriesId) {
     errors.push('create a series first');
   }
@@ -227,6 +245,18 @@ function getConfiguredAccelerationMmPerS2() {
   return roundedAccel;
 }
 
+function getConfiguredPositiveNumber(inputEl, decimals = 1) {
+  const value = parseFloat(inputEl?.value);
+  if (!Number.isFinite(value) || value <= 0) {
+    return null;
+  }
+  const rounded = Number(value.toFixed(decimals));
+  if (inputEl) {
+    inputEl.value = rounded.toFixed(decimals);
+  }
+  return rounded;
+}
+
 function clearSampleFieldsForNextTest() {
   sampleNameEl.value = '';
   sampleCommentEl.value = '';
@@ -237,7 +267,11 @@ function clearSampleFieldsForNextTest() {
 }
 
 function resetMetricsDisplay() {
-  currentLoadEl.textContent = '0 N';
+  if (Number.isFinite(lastAcceptedLoadN)) {
+    currentLoadEl.textContent = `${formatNum(lastAcceptedLoadN, 0)} N`;
+  } else {
+    currentLoadEl.textContent = '0 N';
+  }
   maxLoadEl.textContent = '0 N';
   currentDispEl.textContent = '0.00 mm';
   if (testTypeEl.value === 'load') {
@@ -249,6 +283,35 @@ function resetMetricsDisplay() {
     maxStressEl.textContent = '0.0 MPa';
     stressCardEl.classList.remove('disabled');
   }
+}
+
+function normalizeTestStatus(status) {
+  if (status === 'aborded') {
+    return 'aborted';
+  }
+  if (status === 'running' || status === 'aborted' || status === 'finished') {
+    return status;
+  }
+  return 'finished';
+}
+
+function sanitizeIncomingLoad(loadN) {
+  if (!Number.isFinite(loadN)) {
+    return Number.isFinite(lastAcceptedLoadN) ? lastAcceptedLoadN : 0;
+  }
+
+  if (!Number.isFinite(lastAcceptedLoadN)) {
+    lastAcceptedLoadN = loadN;
+    return loadN;
+  }
+
+  const upwardJump = loadN - lastAcceptedLoadN;
+  if (upwardJump > LOAD_SPIKE_JUMP_THRESHOLD_N) {
+    return lastAcceptedLoadN;
+  }
+
+  lastAcceptedLoadN = loadN;
+  return loadN;
 }
 
 function updateMetricsFromTest(test) {
@@ -470,7 +533,10 @@ function restoreStateFromStorage() {
 
     seriesState.seriesId = typeof parsed.seriesId === 'string' ? parsed.seriesId : null;
     seriesState.createdAtIso = typeof parsed.createdAtIso === 'string' ? parsed.createdAtIso : null;
-    seriesState.tests = parsed.tests;
+    seriesState.tests = parsed.tests.map(test => ({
+      ...test,
+      status: normalizeTestStatus(test?.status)
+    }));
     seriesState.activeTestId = typeof parsed.activeTestId === 'string' ? parsed.activeTestId : null;
     seriesState.readyForStart = !!parsed.readyForStart;
     seriesState.overlaySelection = parsed.overlaySelection && typeof parsed.overlaySelection === 'object'
@@ -708,11 +774,13 @@ function parseLine(line) {
 
   if (tag === 'DATA' && parts.length >= 7) {
     const timestampMs = parseInt(parts[1], 10);
-    const loadN = parseFloat(parts[2]);
+    const loadN = sanitizeIncomingLoad(parseFloat(parts[2]));
     const stepPos = parseInt(parts[3], 10);
     const displacementMm = parseFloat(parts[4]);
     const mode = parseInt(parts[5], 10);
     const speedSps = parseFloat(parts[6]);
+
+    currentLoadEl.textContent = `${formatNum(loadN, 0)} N`;
 
     const activeTest = getActiveTest();
     const area = activeTest ? getAreaMm2FromMeta(activeTest.meta) : getCurrentFormAreaMm2();
@@ -813,6 +881,7 @@ async function connectSerial() {
 
     connectBtn.textContent = 'Disconnect';
     setConnectionBadge(true);
+    updateStartButtonState();
     setStatus('connected');
     readSerialLoop();
   } catch (error) {
@@ -862,6 +931,7 @@ async function disconnectSerial() {
 
   connectBtn.textContent = 'Connect';
   setConnectionBadge(false);
+  updateStartButtonState();
   setStatus('disconnected');
 }
 
@@ -871,6 +941,13 @@ async function sendCommand(command) {
     return;
   }
   await serialWriter.write(`${command}\n`);
+}
+
+async function sendRelativeMoveMm(deltaMm) {
+  if (!Number.isFinite(deltaMm) || deltaMm === 0) {
+    return;
+  }
+  await sendCommand(`M22 ${deltaMm.toFixed(3)}`);
 }
 
 function getSeriesExportRows() {
@@ -982,7 +1059,7 @@ startTestBtn.addEventListener('click', async () => {
   const speed = parseFloat(speedInputEl.value);
   const safeSpeed = Number.isFinite(speed) && speed > 0 ? speed : 1.0;
   const roundedSpeed = Number(safeSpeed.toFixed(1));
-  speedInputEl.value = roundedSpeed.toFixed(1);
+  speedInputEl.value = String(roundedSpeed);
 
   const accelMmPerS2 = getConfiguredAccelerationMmPerS2();
   if (accelMmPerS2 === null) {
@@ -1054,6 +1131,55 @@ if (setAccelBtn && accelInputEl) {
     await sendCommand(`M42 ${accelMmPerS2.toFixed(1)}`);
   });
 }
+
+if (setSampleRateBtn && sampleRateInputEl) {
+  setSampleRateBtn.addEventListener('click', async () => {
+    const sampleRateHz = getConfiguredPositiveNumber(sampleRateInputEl, 1);
+    if (sampleRateHz === null) {
+      setStatus('invalid_sample_rate');
+      return;
+    }
+    await sendCommand(`M44 ${sampleRateHz.toFixed(1)}`);
+  });
+}
+
+if (setManualSlowBtn && manualSlowInputEl) {
+  setManualSlowBtn.addEventListener('click', async () => {
+    const manualSlowMmPerMin = getConfiguredPositiveNumber(manualSlowInputEl, 1);
+    if (manualSlowMmPerMin === null) {
+      setStatus('invalid_manual_slow_speed');
+      return;
+    }
+    await sendCommand(`M45 ${manualSlowMmPerMin.toFixed(1)}`);
+  });
+}
+
+if (setManualFastBtn && manualFastInputEl) {
+  setManualFastBtn.addEventListener('click', async () => {
+    const manualFastMmPerMin = getConfiguredPositiveNumber(manualFastInputEl, 1);
+    if (manualFastMmPerMin === null) {
+      setStatus('invalid_manual_fast_speed');
+      return;
+    }
+    await sendCommand(`M46 ${manualFastMmPerMin.toFixed(1)}`);
+  });
+}
+
+[
+  [jogPlus10Btn, 10],
+  [jogPlus1Btn, 1],
+  [jogPlus01Btn, 0.1],
+  [jogMinus01Btn, -0.1],
+  [jogMinus1Btn, -1],
+  [jogMinus10Btn, -10]
+].forEach(([buttonEl, deltaMm]) => {
+  if (!buttonEl) {
+    return;
+  }
+  buttonEl.addEventListener('click', async () => {
+    await sendRelativeMoveMm(deltaMm);
+  });
+});
 
 testTypeEl.addEventListener('change', () => {
   applyTestTypeUiState();

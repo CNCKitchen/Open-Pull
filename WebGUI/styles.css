@@ -102,6 +102,7 @@ body {
   padding: 14px;
   display: flex;
   flex-direction: column;
+  gap: 12px;
 }
 
 .section-label {
@@ -312,19 +313,29 @@ select.input {
 }
 
 .chart-wrap {
-  margin-top: 12px;
+  margin-top: 0;
+  margin-bottom: 0;
   border: none;
   border-radius: 12px;
   background: #131d30;
   width: 100%;
   height: 460px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
+  display: grid;
+  grid-template-columns: 1fr 96px;
+  gap: 10px;
+  align-items: stretch;
   padding: 10px;
+  overflow: hidden;
+}
+
+.chart-canvas-wrap {
+  min-width: 0;
+  height: 100%;
+  overflow: hidden;
 }
 
 #chartCanvas {
+  display: block;
   width: 100%;
   height: 100%;
   border-radius: 8px;
@@ -332,8 +343,24 @@ select.input {
   border: none;
 }
 
+.jog-panel {
+  display: grid;
+  grid-template-rows: repeat(6, 36px);
+  gap: 6px;
+  align-content: center;
+  min-height: 0;
+}
+
+.jog-panel .btn {
+  width: 100%;
+  height: 36px;
+  min-height: 36px;
+  padding: 0 8px;
+  font-size: 18px;
+}
+
 .status-line {
-  margin-top: 10px;
+  margin-top: 0;
   padding: 8px 10px;
   border: none;
   background: #101a2c;

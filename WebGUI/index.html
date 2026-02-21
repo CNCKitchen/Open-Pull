@@ -36,7 +36,13 @@
         </select>
 
         <div class="inline-input short-input">
-          <input id="speedInput" class="input" type="number" step="0.1" value="1.0" />
+          <select id="speedInput" class="input">
+            <option value="1">1</option>
+            <option value="2">2</option>
+            <option value="5">5</option>
+            <option value="10">10</option>
+            <option value="50">50</option>
+          </select>
           <span>mm/min Speed</span>
         </div>
 
@@ -74,6 +80,18 @@
         <details class="config-section">
           <summary>Configuration</summary>
           <div class="inline-input">
+            <input id="sampleRateInput" class="input" type="number" step="1" value="80" />
+            <button id="setSampleRateBtn" class="btn mini">Set Sample Hz</button>
+          </div>
+          <div class="inline-input">
+            <input id="manualSlowInput" class="input" type="number" step="0.1" value="7.3" />
+            <button id="setManualSlowBtn" class="btn mini">Set Manual Slow</button>
+          </div>
+          <div class="inline-input">
+            <input id="manualFastInput" class="input" type="number" step="0.1" value="72.8" />
+            <button id="setManualFastBtn" class="btn mini">Set Manual Fast</button>
+          </div>
+          <div class="inline-input">
             <input id="accelInput" class="input" type="number" step="0.1" value="30.0" />
             <button id="setAccelBtn" class="btn mini">Set Accel</button>
           </div>
@@ -99,7 +117,17 @@
         </div>
 
         <div class="chart-wrap">
-          <canvas id="chartCanvas" width="760" height="440"></canvas>
+          <div class="chart-canvas-wrap">
+            <canvas id="chartCanvas" width="760" height="440"></canvas>
+          </div>
+          <div class="jog-panel" aria-label="Manual relative movement">
+            <button id="jogPlus10Btn" class="btn mini">+10 mm</button>
+            <button id="jogPlus1Btn" class="btn mini">+1 mm</button>
+            <button id="jogPlus01Btn" class="btn mini">+0.1 mm</button>
+            <button id="jogMinus01Btn" class="btn mini">-0.1 mm</button>
+            <button id="jogMinus1Btn" class="btn mini">-1 mm</button>
+            <button id="jogMinus10Btn" class="btn mini">-10 mm</button>
+          </div>
         </div>
 
         <div class="status-line" id="statusLine">STATUS: ready</div>

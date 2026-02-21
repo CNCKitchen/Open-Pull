@@ -11,6 +11,7 @@
 #include <HX711.h>
 #include <string.h>
 #include <stdlib.h>
+#include <math.h>
 
 ////// Load Cell Variables
 float gainValue = -875.7f * (1.0f - 0.001f); // CALIBRATION FACTOR
@@ -29,8 +30,8 @@ const float stepsPerMM = 200.0f * 2.0f * (13.0f + 212.0f / 289.0f) / 2.0f; // St
 const float baseTestSpeedSps = stepsPerMM / 60.0f; // 1 mm/min
 
 // Legacy jog delays mapped to SPS to preserve feel
-const float jogSlowSps = 1000000.0f / 3000.0f;
-const float jogFastSps = 1000000.0f / 300.0f;
+float jogSlowSps = 1000000.0f / 3000.0f;
+float jogFastSps = 1000000.0f / 300.0f;
 
 // Motion profile defaults
 float slowTestSps = baseTestSpeedSps;
@@ -41,8 +42,9 @@ float gotoZeroSps = 8.0f * baseTestSpeedSps;
 // Timing
 const unsigned long yMTestTimeMs = 30000UL;
 const unsigned long accelUpdateIntervalUs = 5000UL;
-const unsigned long sampleIntervalUs = 12500UL; // target 80 Hz stream
+unsigned long sampleIntervalUs = 12500UL; // target 80 Hz stream
 const unsigned long hx711MissingDataTimeoutMs = 1500UL;
+const float hx711UpwardSpikeThresholdN = 300.0f;
 
 // Mode definitions
 const byte MODE_TEST_SLOW = 1;
@@ -50,6 +52,7 @@ const byte MODE_MANUAL = 2;
 const byte MODE_TEST_FAST = 3;
 const byte MODE_YOUNGS = 4;
 const byte MODE_GOTO_ZERO = 5;
+const byte MODE_RELATIVE_MOVE = 6;
 
 volatile bool motionEnabled = false;
 volatile bool stepDirLow = true;
@@ -64,7 +67,10 @@ float currentSpeedSps = 0.0f;
 float maxForce = 0.0f;
 float loweringCounter = 0.0f;
 float lastLoadValue = 0.0f;
+bool hasLoadSample = false;
 long zeroStepOffset = 0;
+long relativeMoveTargetStep = 0;
+float relativeMoveSpeedSps = 0.0f;
 unsigned long startTimeMs = 0;
 unsigned long lastSampleUs = 0;
 unsigned long lastAccelUpdateUs = 0;
@@ -295,6 +301,26 @@ void processCommand(char *line) {
   } else if (strcmp(cmd, "M21") == 0) {
     mode = MODE_GOTO_ZERO;
     emitAck("M21", "goto_zero");
+  } else if (strcmp(cmd, "M22") == 0 && arg1 != NULL) {
+    float deltaMm = atof(arg1);
+    if (fabs(deltaMm) >= 0.001f) {
+      long currentPos;
+      noInterrupts();
+      currentPos = stepPosition;
+      interrupts();
+
+      long deltaSteps = (long)(deltaMm * stepsPerMM);
+      if (deltaSteps == 0) {
+        deltaSteps = (deltaMm > 0.0f) ? 1L : -1L;
+      }
+
+      relativeMoveTargetStep = currentPos + deltaSteps;
+      relativeMoveSpeedSps = (fabs(deltaMm) >= 1.0f) ? jogFastSps : jogSlowSps;
+      mode = MODE_RELATIVE_MOVE;
+      emitAck("M22", "relative_move_started");
+    } else {
+      emitStatus("ERR", "invalid_relative_move");
+    }
   } else if (strcmp(cmd, "M40") == 0 && arg1 != NULL) {
     float mmPerMin = atof(arg1);
     if (mmPerMin > 0.01f) {
@@ -326,6 +352,34 @@ void processCommand(char *line) {
       emitAck("M43", "gain_set");
     } else {
       emitStatus("ERR", "invalid_gain");
+    }
+  } else if (strcmp(cmd, "M44") == 0 && arg1 != NULL) {
+    float sampleRateHz = atof(arg1);
+    if (sampleRateHz > 0.1f) {
+      unsigned long newIntervalUs = (unsigned long)(1000000.0f / sampleRateHz);
+      if (newIntervalUs < 1000UL) {
+        newIntervalUs = 1000UL;
+      }
+      sampleIntervalUs = newIntervalUs;
+      emitAck("M44", "sample_rate_set");
+    } else {
+      emitStatus("ERR", "invalid_sample_rate");
+    }
+  } else if (strcmp(cmd, "M45") == 0 && arg1 != NULL) {
+    float mmPerMin = atof(arg1);
+    if (mmPerMin > 0.01f) {
+      jogSlowSps = (mmPerMin / 60.0f) * stepsPerMM;
+      emitAck("M45", "manual_slow_speed_set");
+    } else {
+      emitStatus("ERR", "invalid_manual_slow_speed");
+    }
+  } else if (strcmp(cmd, "M46") == 0 && arg1 != NULL) {
+    float mmPerMin = atof(arg1);
+    if (mmPerMin > 0.01f) {
+      jogFastSps = (mmPerMin / 60.0f) * stepsPerMM;
+      emitAck("M46", "manual_fast_speed_set");
+    } else {
+      emitStatus("ERR", "invalid_manual_fast_speed");
     }
   } else {
     emitStatus("ERR", "unknown_command");
@@ -396,6 +450,28 @@ void updateModeAndTargets() {
       emitStatus("ABORT", "goto_zero_stopped");
       enterManualMode();
     }
+  } else if (mode == MODE_RELATIVE_MOVE) {
+    long delta;
+    noInterrupts();
+    delta = relativeMoveTargetStep - stepPosition;
+    interrupts();
+
+    if (delta > 0) {
+      setDirectionLow(true);
+      targetSpeedSps = relativeMoveSpeedSps;
+    } else if (delta < 0) {
+      setDirectionLow(false);
+      targetSpeedSps = relativeMoveSpeedSps;
+    } else {
+      targetSpeedSps = 0.0f;
+      enterManualMode();
+      emitStatus("DONE", "relative_move_done");
+    }
+
+    if (!digitalRead(downPin)) {
+      emitStatus("ABORT", "relative_move_stopped");
+      enterManualMode();
+    }
   }
 }
 
@@ -443,7 +519,16 @@ void sampleAndStream() {
   digitalWrite(led1Pin, HIGH);
   float loadValue = lastLoadValue;
   if (loadCell.is_ready()) {
-    loadValue = ((float)loadCell.read_average(1) - (float)tareValue) / gainValue;
+    float measuredLoad = ((float)loadCell.read_average(1) - (float)tareValue) / gainValue;
+    if (hasLoadSample) {
+      float upwardJump = measuredLoad - lastLoadValue;
+      if (upwardJump > hx711UpwardSpikeThresholdN) {
+        measuredLoad = lastLoadValue;
+      }
+    } else {
+      hasLoadSample = true;
+    }
+    loadValue = measuredLoad;
     lastLoadValue = loadValue;
     lastHx711DataMs = millis();
   } else {
