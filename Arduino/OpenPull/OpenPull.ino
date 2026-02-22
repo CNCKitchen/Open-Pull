@@ -42,10 +42,12 @@ float gotoZeroSps = 8.0f * baseTestSpeedSps;
 float preloadN = 2.0f;
 float loadFilterAlpha = 0.20f;
 bool autoBreakDetectionEnabled = true;
+bool tareAfterBreakEnabled = false;
 const float gainAbsMin = 100.0f;
 const float gainAbsMax = 5000.0f;
 const unsigned long gainWriteDelayMs = 30000UL;
 const unsigned long gainWriteWindowMs = 30000UL;
+const unsigned long tareAfterBreakDelayMs = 1000UL;
 
 // Timing
 const unsigned long yMTestTimeMs = 30000UL;
@@ -109,6 +111,8 @@ bool debug = false;
 bool gainWriteArmed = false;
 unsigned long gainWriteAllowedFromMs = 0;
 unsigned long gainWriteAllowedUntilMs = 0;
+bool quickTareAfterBreakPending = false;
+unsigned long quickTareAfterBreakAtMs = 0;
 
 char serialLine[96];
 uint8_t serialLineIndex = 0;
@@ -127,6 +131,7 @@ void updateAcceleration();
 void sampleAndStream();
 float getDisplacementMm();
 void performTare();
+void performQuickTare();
 void emitHx711NotReady();
 void loadConfigFromEeprom();
 void saveConfigToEeprom();
@@ -149,10 +154,11 @@ struct PersistedConfig {
   float preloadN;
   float loadFilterAlpha;
   uint8_t autoBreakDetectionEnabled;
+  uint8_t tareAfterBreakEnabled;
 };
 
 const uint16_t persistedConfigMagic = 0x504FULL;
-const uint8_t persistedConfigVersion = 3;
+const uint8_t persistedConfigVersion = 4;
 
 ISR(TIMER1_COMPA_vect) {
   if (!motionEnabled) {
@@ -211,6 +217,7 @@ void saveConfigToEeprom() {
   config.preloadN = preloadN;
   config.loadFilterAlpha = loadFilterAlpha;
   config.autoBreakDetectionEnabled = autoBreakDetectionEnabled ? 1 : 0;
+  config.tareAfterBreakEnabled = tareAfterBreakEnabled ? 1 : 0;
   EEPROM.put(0, config);
 }
 
@@ -264,6 +271,7 @@ void loadConfigFromEeprom() {
   }
 
   autoBreakDetectionEnabled = config.autoBreakDetectionEnabled != 0;
+  tareAfterBreakEnabled = config.tareAfterBreakEnabled != 0;
 }
 
 void emitConfig() {
@@ -288,11 +296,22 @@ void emitConfig() {
   Serial.print(',');
   Serial.print(loadFilterAlpha, 3);
   Serial.print(',');
-  Serial.println(autoBreakDetectionEnabled ? 1 : 0);
+  Serial.print(autoBreakDetectionEnabled ? 1 : 0);
+  Serial.print(',');
+  Serial.println(tareAfterBreakEnabled ? 1 : 0);
 }
 
 void loop() {
   processSerial();
+
+  if (quickTareAfterBreakPending && mode == MODE_MANUAL && !delayedStartPending) {
+    if ((long)(millis() - quickTareAfterBreakAtMs) >= 0) {
+      performQuickTare();
+      quickTareAfterBreakPending = false;
+      emitStatus("AUTO", "tare_after_break_done");
+    }
+  }
+
   updateModeAndTargets();
   updateAcceleration();
   sampleAndStream();
@@ -399,6 +418,29 @@ void performTare() {
   digitalWrite(led1Pin, LOW);
 }
 
+void performQuickTare() {
+  digitalWrite(led1Pin, HIGH);
+  unsigned long tareStartMs = millis();
+  while (!loadCell.is_ready()) {
+    if ((unsigned long)(millis() - tareStartMs) >= 300UL) {
+      emitStatus("ERR", "quick_tare_timeout");
+      digitalWrite(led1Pin, LOW);
+      return;
+    }
+    delay(2);
+  }
+
+  tareValue = loadCell.read_average(8);
+  hasLoadSample = false;
+  hasFilteredLoadSample = false;
+  lastLoadValue = 0.0f;
+  lastRawLoadValue = 0.0f;
+  hx711RawWindowCount = 0;
+  hx711RawWindowIndex = 0;
+  lastHx711DataMs = millis();
+  digitalWrite(led1Pin, LOW);
+}
+
 float computeMedian(const float *values, uint8_t count) {
   if (count == 0) {
     return 0.0f;
@@ -488,6 +530,7 @@ void processCommand(char *line) {
   }
 
   if (strcmp(cmd, "M10") == 0) {
+    quickTareAfterBreakPending = false;
     delayedStartPending = true;
     delayedStartStage = (preloadN > 0.0f) ? START_STAGE_PRELOAD_APPROACH : START_STAGE_WAIT_BEFORE_TARE;
     delayedStartStageMs = millis();
@@ -497,18 +540,22 @@ void processCommand(char *line) {
     targetSpeedSps = 0.0f;
     emitAck("M10", (preloadN > 0.0f) ? "start_slow_test_pending_preload" : "start_slow_test_pending_tare");
   } else if (strcmp(cmd, "M11") == 0) {
+    quickTareAfterBreakPending = false;
     delayedStartPending = false;
     enterManualMode();
     emitAck("M11", "manual_mode");
   } else if (strcmp(cmd, "M15") == 0) {
+    quickTareAfterBreakPending = false;
     delayedStartPending = false;
     enterManualMode();
     emitStatus("ABORT", "emergency_stop");
     emitAck("M15", "emergency_stop");
   } else if (strcmp(cmd, "M12") == 0) {
+    quickTareAfterBreakPending = false;
     performTare();
     emitAck("M12", "tare_ok");
   } else if (strcmp(cmd, "M13") == 0) {
+    quickTareAfterBreakPending = false;
     mode = MODE_YOUNGS;
     maxForce = 0.0f;
     loweringCounter = 0.0f;
@@ -517,6 +564,7 @@ void processCommand(char *line) {
     startTimeMs = millis();
     emitAck("M13", "start_youngs_test");
   } else if (strcmp(cmd, "M14") == 0) {
+    quickTareAfterBreakPending = false;
     mode = MODE_TEST_FAST;
     maxForce = 0.0f;
     loweringCounter = 0.0f;
@@ -665,6 +713,15 @@ void processCommand(char *line) {
       emitAck("M49", autoBreakDetectionEnabled ? "auto_break_enabled" : "auto_break_disabled");
     } else {
       emitStatus("ERR", "invalid_auto_break_value");
+    }
+  } else if (strcmp(cmd, "M51") == 0 && arg1 != NULL) {
+    int enabled = atoi(arg1);
+    if (enabled == 0 || enabled == 1) {
+      tareAfterBreakEnabled = enabled == 1;
+      saveConfigToEeprom();
+      emitAck("M51", tareAfterBreakEnabled ? "tare_after_break_enabled" : "tare_after_break_disabled");
+    } else {
+      emitStatus("ERR", "invalid_tare_after_break_value");
     }
   } else if (strcmp(cmd, "M50") == 0) {
     emitConfig();
@@ -971,6 +1028,10 @@ void sampleAndStream() {
       emitStatus("DONE", "specimen_break_detected");
       negativeLoadStreak = 0;
       enterManualMode();
+      if (tareAfterBreakEnabled) {
+        quickTareAfterBreakPending = true;
+        quickTareAfterBreakAtMs = millis() + tareAfterBreakDelayMs;
+      }
     }
   } else {
     negativeLoadStreak = 0;

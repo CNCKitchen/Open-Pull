@@ -28,6 +28,7 @@ const preloadInputEl = document.getElementById('preloadInput');
 const alphaInputEl = document.getElementById('alphaInput');
 const sampleRateInputEl = document.getElementById('sampleRateInput');
 const autoBreakInputEl = document.getElementById('autoBreakInput');
+const tareAfterBreakInputEl = document.getElementById('tareAfterBreakInput');
 const pinLastTestInputEl = document.getElementById('pinLastTestInput');
 const yAxisModeInputEl = document.getElementById('yAxisModeInput');
 const xAxisModeInputEl = document.getElementById('xAxisModeInput');
@@ -48,6 +49,7 @@ const setPreloadBtn = document.getElementById('setPreloadBtn');
 const setAlphaBtn = document.getElementById('setAlphaBtn');
 const setSampleRateBtn = document.getElementById('setSampleRateBtn');
 const setAutoBreakBtn = document.getElementById('setAutoBreakBtn');
+const setTareAfterBreakBtn = document.getElementById('setTareAfterBreakBtn');
 const setManualSlowBtn = document.getElementById('setManualSlowBtn');
 const setManualFastBtn = document.getElementById('setManualFastBtn');
 const setAccelBtn = document.getElementById('setAccelBtn');
@@ -104,6 +106,7 @@ const configSetBindings = [
   { command: 'M47', inputEl: preloadInputEl, buttonEl: setPreloadBtn, appliedValue: '' },
   { command: 'M48', inputEl: alphaInputEl, buttonEl: setAlphaBtn, appliedValue: '' },
   { command: 'M49', inputEl: autoBreakInputEl, buttonEl: setAutoBreakBtn, appliedValue: '' },
+  { command: 'M51', inputEl: tareAfterBreakInputEl, buttonEl: setTareAfterBreakBtn, appliedValue: '' },
   { command: 'M44', inputEl: sampleRateInputEl, buttonEl: setSampleRateBtn, appliedValue: '' },
   { command: 'M45', inputEl: manualSlowInputEl, buttonEl: setManualSlowBtn, appliedValue: '' },
   { command: 'M46', inputEl: manualFastInputEl, buttonEl: setManualFastBtn, appliedValue: '' },
@@ -1341,6 +1344,7 @@ function applyMachineConfigFromParts(parts) {
   const preloadN = parseFlexibleNumber(parts[9]);
   const alpha = parseFlexibleNumber(parts[10]);
   const autoBreakEnabled = parseInt(parts[11], 10);
+  const tareAfterBreakEnabled = parseInt(parts[12], 10);
 
   if (Number.isFinite(preloadN) && preloadInputEl) {
     preloadInputEl.value = preloadN.toFixed(1);
@@ -1370,6 +1374,11 @@ function applyMachineConfigFromParts(parts) {
   if (autoBreakInputEl && (autoBreakEnabled === 0 || autoBreakEnabled === 1)) {
     autoBreakInputEl.value = String(autoBreakEnabled);
     markConfigAppliedByCommand('M49');
+  }
+
+  if (tareAfterBreakInputEl && (tareAfterBreakEnabled === 0 || tareAfterBreakEnabled === 1)) {
+    tareAfterBreakInputEl.value = String(tareAfterBreakEnabled);
+    markConfigAppliedByCommand('M51');
   }
 
   if (Number.isFinite(manualSlowMmPerMin) && manualSlowInputEl) {
@@ -1498,7 +1507,7 @@ function parseLine(line) {
     return;
   }
 
-  if (tag === 'CFG' && parts.length >= 11) {
+  if (tag === 'CFG' && parts.length >= 13) {
     applyMachineConfigFromParts(parts);
     return;
   }
@@ -1875,6 +1884,13 @@ if (setAutoBreakBtn && autoBreakInputEl) {
   setAutoBreakBtn.addEventListener('click', async () => {
     const enabled = autoBreakInputEl.value === '1' ? 1 : 0;
     await sendCommand(`M49 ${enabled}`);
+  });
+}
+
+if (setTareAfterBreakBtn && tareAfterBreakInputEl) {
+  setTareAfterBreakBtn.addEventListener('click', async () => {
+    const enabled = tareAfterBreakInputEl.value === '1' ? 1 : 0;
+    await sendCommand(`M51 ${enabled}`);
   });
 }
 
