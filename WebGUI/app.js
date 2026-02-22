@@ -446,9 +446,13 @@ function isRunningTest(test) {
 function getGeometryFromInputs() {
   const testType = testTypeEl.value;
   const speedMmMin = parseFlexibleNumber(speedInputEl.value);
-  const widthMm = parseFlexibleNumber(widthInputEl.value);
-  const thicknessMm = parseFlexibleNumber(heightInputEl.value);
-  const diameterMm = parseFlexibleNumber(diameterInputEl.value);
+  const rawWidthMm = parseFlexibleNumber(widthInputEl.value);
+  const rawThicknessMm = parseFlexibleNumber(heightInputEl.value);
+  const rawDiameterMm = parseFlexibleNumber(diameterInputEl.value);
+
+  const widthMm = (testType === 'rectangular') ? rawWidthMm : null;
+  const thicknessMm = (testType === 'rectangular') ? rawThicknessMm : null;
+  const diameterMm = (testType === 'cylindrical') ? rawDiameterMm : null;
 
   return {
     testType,
@@ -1798,6 +1802,7 @@ function buildStructuredXlsxSheet(tests) {
     const col = index * 2;
     const valueCol = col + 1;
     const isLoadTest = test.meta?.testType === 'load';
+    const isCylindricalTest = test.meta?.testType === 'cylindrical';
     const yHeader = isLoadTest ? 'force' : 'stress';
     const maxLabel = isLoadTest ? 'max force' : 'max stress';
     const thicknessMm = Number.isFinite(test.meta?.thicknessMm) ? test.meta.thicknessMm : test.meta?.heightMm;
@@ -1818,12 +1823,12 @@ function buildStructuredXlsxSheet(tests) {
     matrix[2][col] = formatExportDateTime(test.startedAtIso);
     matrix[3][col] = 'speed';
     matrix[3][valueCol] = roundForExport(test.meta?.speedMmMin, 3);
-    matrix[4][col] = 'width';
-    matrix[4][valueCol] = roundForExport(test.meta?.widthMm, 4);
-    matrix[5][col] = test.meta?.testType === 'cylindrical' ? 'diameter' : 'thickness';
-    matrix[5][valueCol] = test.meta?.testType === 'cylindrical'
+    matrix[4][col] = (!isLoadTest && !isCylindricalTest) ? 'width' : '';
+    matrix[4][valueCol] = (!isLoadTest && !isCylindricalTest) ? roundForExport(test.meta?.widthMm, 4) : '';
+    matrix[5][col] = isCylindricalTest ? 'diameter' : (!isLoadTest ? 'thickness' : '');
+    matrix[5][valueCol] = isCylindricalTest
       ? roundForExport(test.meta?.diameterMm, 4)
-      : roundForExport(thicknessMm, 4);
+      : (!isLoadTest ? roundForExport(thicknessMm, 4) : '');
     matrix[6][col] = 'area';
     matrix[6][valueCol] = roundForExport(areaMm2, 4);
     matrix[7][col] = maxLabel;

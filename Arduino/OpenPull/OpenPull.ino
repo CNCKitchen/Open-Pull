@@ -114,7 +114,7 @@ unsigned long gainWriteAllowedUntilMs = 0;
 bool quickTareAfterBreakPending = false;
 unsigned long quickTareAfterBreakAtMs = 0;
 
-char serialLine[96];
+char serialLine[64];
 uint8_t serialLineIndex = 0;
 
 void setupTimer1();
@@ -122,8 +122,8 @@ void setDirectionLow(bool low);
 void setStepIntervalFromSpeed(float speedSps);
 void setMotionEnabled(bool enabled);
 void enterManualMode();
-void emitStatus(const char *code, const char *message);
-void emitAck(const char *command, const char *message);
+void emitStatus(const __FlashStringHelper *code, const __FlashStringHelper *message);
+void emitAck(const __FlashStringHelper *command, const __FlashStringHelper *message);
 void processSerial();
 void processCommand(char *line);
 void updateModeAndTargets();
@@ -200,7 +200,7 @@ void setup() {
   performTare();
   lastAccelUpdateUs = micros();
   lastSampleUs = micros();
-  emitStatus("BOOT", "ready");
+  emitStatus(F("BOOT"), F("ready"));
 }
 
 void saveConfigToEeprom() {
@@ -227,6 +227,7 @@ void loadConfigFromEeprom() {
 
   if (config.magic != persistedConfigMagic || config.version != persistedConfigVersion) {
     saveConfigToEeprom();
+    emitStatus(F("CFG"), F("eeprom_invalid_defaults_saved"));
     return;
   }
 
@@ -272,10 +273,11 @@ void loadConfigFromEeprom() {
 
   autoBreakDetectionEnabled = config.autoBreakDetectionEnabled != 0;
   tareAfterBreakEnabled = config.tareAfterBreakEnabled != 0;
+  emitStatus(F("CFG"), F("eeprom_loaded"));
 }
 
 void emitConfig() {
-  Serial.print("CFG,");
+  Serial.print(F("CFG,"));
   Serial.print(millis());
   Serial.print(',');
   Serial.print((slowTestSps / stepsPerMM) * 60.0f, 3);
@@ -308,7 +310,7 @@ void loop() {
     if ((long)(millis() - quickTareAfterBreakAtMs) >= 0) {
       performTare();
       quickTareAfterBreakPending = false;
-      emitStatus("AUTO", "tare_after_break_done");
+      emitStatus(F("AUTO"), F("tare_after_break_done"));
     }
   }
 
@@ -364,11 +366,11 @@ void enterManualMode() {
   mode = MODE_MANUAL;
   modeAddition = 0;
   targetSpeedSps = 0.0f;
-  emitStatus("MODE", "manual");
+  emitStatus(F("MODE"), F("manual"));
 }
 
-void emitStatus(const char *code, const char *message) {
-  Serial.print("STATUS,");
+void emitStatus(const __FlashStringHelper *code, const __FlashStringHelper *message) {
+  Serial.print(F("STATUS,"));
   Serial.print(millis());
   Serial.print(',');
   Serial.print(code);
@@ -376,8 +378,8 @@ void emitStatus(const char *code, const char *message) {
   Serial.println(message);
 }
 
-void emitAck(const char *command, const char *message) {
-  Serial.print("ACK,");
+void emitAck(const __FlashStringHelper *command, const __FlashStringHelper *message) {
+  Serial.print(F("ACK,"));
   Serial.print(millis());
   Serial.print(',');
   Serial.print(command);
@@ -391,7 +393,7 @@ void emitHx711NotReady() {
     return;
   }
   if ((unsigned long)(nowMs - lastHx711WarnMs) >= 1000UL) {
-    emitStatus("ERR", "hx711_not_ready");
+    emitStatus(F("ERR"), F("hx711_not_ready"));
     lastHx711WarnMs = nowMs;
   }
 }
@@ -401,7 +403,7 @@ void performTare() {
   unsigned long tareStartMs = millis();
   while (!loadCell.is_ready()) {
     if ((unsigned long)(millis() - tareStartMs) >= 500UL) {
-      emitStatus("ERR", "tare_timeout");
+      emitStatus(F("ERR"), F("tare_timeout"));
       digitalWrite(led1Pin, LOW);
       return;
     }
@@ -423,7 +425,7 @@ void performQuickTare() {
   unsigned long tareStartMs = millis();
   while (!loadCell.is_ready()) {
     if ((unsigned long)(millis() - tareStartMs) >= 300UL) {
-      emitStatus("ERR", "quick_tare_timeout");
+      emitStatus(F("ERR"), F("quick_tare_timeout"));
       digitalWrite(led1Pin, LOW);
       return;
     }
@@ -538,22 +540,22 @@ void processCommand(char *line) {
     delayedStartModeAddition = (arg1 != NULL && strcmp(arg1, "S1") == 0) ? 1 : 0;
     mode = MODE_MANUAL;
     targetSpeedSps = 0.0f;
-    emitAck("M10", (preloadN > 0.0f) ? "start_slow_test_pending_preload" : "start_slow_test_pending_tare");
+    emitAck(F("M10"), (preloadN > 0.0f) ? F("start_slow_test_pending_preload") : F("start_slow_test_pending_tare"));
   } else if (strcmp(cmd, "M11") == 0) {
     quickTareAfterBreakPending = false;
     delayedStartPending = false;
     enterManualMode();
-    emitAck("M11", "manual_mode");
+    emitAck(F("M11"), F("manual_mode"));
   } else if (strcmp(cmd, "M15") == 0) {
     quickTareAfterBreakPending = false;
     delayedStartPending = false;
     enterManualMode();
-    emitStatus("ABORT", "emergency_stop");
-    emitAck("M15", "emergency_stop");
+    emitStatus(F("ABORT"), F("emergency_stop"));
+    emitAck(F("M15"), F("emergency_stop"));
   } else if (strcmp(cmd, "M12") == 0) {
     quickTareAfterBreakPending = false;
     performTare();
-    emitAck("M12", "tare_ok");
+    emitAck(F("M12"), F("tare_ok"));
   } else if (strcmp(cmd, "M13") == 0) {
     quickTareAfterBreakPending = false;
     mode = MODE_YOUNGS;
@@ -562,7 +564,7 @@ void processCommand(char *line) {
     setDirectionLow(true);
     performTare();
     startTimeMs = millis();
-    emitAck("M13", "start_youngs_test");
+    emitAck(F("M13"), F("start_youngs_test"));
   } else if (strcmp(cmd, "M14") == 0) {
     quickTareAfterBreakPending = false;
     mode = MODE_TEST_FAST;
@@ -570,15 +572,15 @@ void processCommand(char *line) {
     loweringCounter = 0.0f;
     setDirectionLow(true);
     performTare();
-    emitAck("M14", "start_fast_test");
+    emitAck(F("M14"), F("start_fast_test"));
   } else if (strcmp(cmd, "M20") == 0) {
     noInterrupts();
     zeroStepOffset = stepPosition;
     interrupts();
-    emitAck("M20", "set_zero");
+    emitAck(F("M20"), F("set_zero"));
   } else if (strcmp(cmd, "M21") == 0) {
     mode = MODE_GOTO_ZERO;
-    emitAck("M21", "goto_zero");
+    emitAck(F("M21"), F("goto_zero"));
   } else if (strcmp(cmd, "M22") == 0 && arg1 != NULL) {
     float deltaMm = atof(arg1);
     if (fabs(deltaMm) >= 0.001f) {
@@ -595,55 +597,55 @@ void processCommand(char *line) {
       relativeMoveTargetStep = currentPos + deltaSteps;
       relativeMoveSpeedSps = (fabs(deltaMm) >= 1.0f) ? jogFastSps : jogSlowSps;
       mode = MODE_RELATIVE_MOVE;
-      emitAck("M22", "relative_move_started");
+      emitAck(F("M22"), F("relative_move_started"));
     } else {
-      emitStatus("ERR", "invalid_relative_move");
+      emitStatus(F("ERR"), F("invalid_relative_move"));
     }
   } else if (strcmp(cmd, "M40") == 0 && arg1 != NULL) {
     float mmPerMin = atof(arg1);
     if (mmPerMin > 0.01f) {
       slowTestSps = (mmPerMin / 60.0f) * stepsPerMM;
       saveConfigToEeprom();
-      emitAck("M40", "slow_speed_set");
+      emitAck(F("M40"), F("slow_speed_set"));
     } else {
-      emitStatus("ERR", "invalid_slow_speed");
+      emitStatus(F("ERR"), F("invalid_slow_speed"));
     }
   } else if (strcmp(cmd, "M41") == 0 && arg1 != NULL) {
     float mmPerMin = atof(arg1);
     if (mmPerMin > 0.01f) {
       fastTestSps = (mmPerMin / 60.0f) * stepsPerMM;
       saveConfigToEeprom();
-      emitAck("M41", "fast_speed_set");
+      emitAck(F("M41"), F("fast_speed_set"));
     } else {
-      emitStatus("ERR", "invalid_fast_speed");
+      emitStatus(F("ERR"), F("invalid_fast_speed"));
     }
   } else if (strcmp(cmd, "M42") == 0 && arg1 != NULL) {
     float accelMmPerS2 = atof(arg1);
     if (accelMmPerS2 > 0.01f) {
       accelSps2 = accelMmPerS2 * stepsPerMM;
       saveConfigToEeprom();
-      emitAck("M42", "accel_set");
+      emitAck(F("M42"), F("accel_set"));
     } else {
-      emitStatus("ERR", "invalid_accel");
+      emitStatus(F("ERR"), F("invalid_accel"));
     }
   } else if (strcmp(cmd, "M53") == 0) {
     if (mode != MODE_MANUAL || delayedStartPending) {
-      emitStatus("ERR", "gain_arm_only_manual");
+      emitStatus(F("ERR"), F("gain_arm_only_manual"));
     } else {
       gainWriteArmed = true;
       gainWriteAllowedFromMs = millis() + gainWriteDelayMs;
       gainWriteAllowedUntilMs = gainWriteAllowedFromMs + gainWriteWindowMs;
-      emitAck("M53", "gain_set_wait_30s_then_30s_window");
+      emitAck(F("M53"), F("gain_set_wait_30s_then_30s_window"));
     }
   } else if (strcmp(cmd, "M43") == 0 && arg1 != NULL) {
     if (gainWriteArmed && (long)(millis() - gainWriteAllowedFromMs) < 0) {
-      emitStatus("ERR", "gain_wait_not_elapsed");
+      emitStatus(F("ERR"), F("gain_wait_not_elapsed"));
       return;
     }
 
     if (!isGainWriteWindowActive()) {
       gainWriteArmed = false;
-      emitStatus("ERR", "gain_locked_use_m53");
+      emitStatus(F("ERR"), F("gain_locked_use_m53"));
       return;
     }
 
@@ -652,9 +654,9 @@ void processCommand(char *line) {
       gainValue = newGain;
       gainWriteArmed = false;
       saveConfigToEeprom();
-      emitAck("M43", "gain_set");
+      emitAck(F("M43"), F("gain_set"));
     } else {
-      emitStatus("ERR", "invalid_gain_range");
+      emitStatus(F("ERR"), F("invalid_gain_range"));
     }
   } else if (strcmp(cmd, "M44") == 0 && arg1 != NULL) {
     float sampleRateHz = atof(arg1);
@@ -665,69 +667,69 @@ void processCommand(char *line) {
       }
       sampleIntervalUs = newIntervalUs;
       saveConfigToEeprom();
-      emitAck("M44", "sample_rate_set");
+      emitAck(F("M44"), F("sample_rate_set"));
     } else {
-      emitStatus("ERR", "invalid_sample_rate");
+      emitStatus(F("ERR"), F("invalid_sample_rate"));
     }
   } else if (strcmp(cmd, "M45") == 0 && arg1 != NULL) {
     float mmPerMin = atof(arg1);
     if (mmPerMin > 0.01f) {
       jogSlowSps = (mmPerMin / 60.0f) * stepsPerMM;
       saveConfigToEeprom();
-      emitAck("M45", "manual_slow_speed_set");
+      emitAck(F("M45"), F("manual_slow_speed_set"));
     } else {
-      emitStatus("ERR", "invalid_manual_slow_speed");
+      emitStatus(F("ERR"), F("invalid_manual_slow_speed"));
     }
   } else if (strcmp(cmd, "M46") == 0 && arg1 != NULL) {
     float mmPerMin = atof(arg1);
     if (mmPerMin > 0.01f) {
       jogFastSps = (mmPerMin / 60.0f) * stepsPerMM;
       saveConfigToEeprom();
-      emitAck("M46", "manual_fast_speed_set");
+      emitAck(F("M46"), F("manual_fast_speed_set"));
     } else {
-      emitStatus("ERR", "invalid_manual_fast_speed");
+      emitStatus(F("ERR"), F("invalid_manual_fast_speed"));
     }
   } else if (strcmp(cmd, "M47") == 0 && arg1 != NULL) {
     float configuredPreloadN = atof(arg1);
     if (configuredPreloadN >= 0.0f) {
       preloadN = configuredPreloadN;
       saveConfigToEeprom();
-      emitAck("M47", "preload_set");
+      emitAck(F("M47"), F("preload_set"));
     } else {
-      emitStatus("ERR", "invalid_preload");
+      emitStatus(F("ERR"), F("invalid_preload"));
     }
   } else if (strcmp(cmd, "M48") == 0 && arg1 != NULL) {
     float configuredAlpha = atof(arg1);
     if (configuredAlpha > 0.0f && configuredAlpha <= 1.0f) {
       loadFilterAlpha = configuredAlpha;
       saveConfigToEeprom();
-      emitAck("M48", "filter_alpha_set");
+      emitAck(F("M48"), F("filter_alpha_set"));
     } else {
-      emitStatus("ERR", "invalid_filter_alpha");
+      emitStatus(F("ERR"), F("invalid_filter_alpha"));
     }
   } else if (strcmp(cmd, "M49") == 0 && arg1 != NULL) {
     int enabled = atoi(arg1);
     if (enabled == 0 || enabled == 1) {
       autoBreakDetectionEnabled = enabled == 1;
       saveConfigToEeprom();
-      emitAck("M49", autoBreakDetectionEnabled ? "auto_break_enabled" : "auto_break_disabled");
+      emitAck(F("M49"), autoBreakDetectionEnabled ? F("auto_break_enabled") : F("auto_break_disabled"));
     } else {
-      emitStatus("ERR", "invalid_auto_break_value");
+      emitStatus(F("ERR"), F("invalid_auto_break_value"));
     }
   } else if (strcmp(cmd, "M51") == 0 && arg1 != NULL) {
     int enabled = atoi(arg1);
     if (enabled == 0 || enabled == 1) {
       tareAfterBreakEnabled = enabled == 1;
       saveConfigToEeprom();
-      emitAck("M51", tareAfterBreakEnabled ? "tare_after_break_enabled" : "tare_after_break_disabled");
+      emitAck(F("M51"), tareAfterBreakEnabled ? F("tare_after_break_enabled") : F("tare_after_break_disabled"));
     } else {
-      emitStatus("ERR", "invalid_tare_after_break_value");
+      emitStatus(F("ERR"), F("invalid_tare_after_break_value"));
     }
   } else if (strcmp(cmd, "M50") == 0) {
     emitConfig();
-    emitAck("M50", "config_reported");
+    emitAck(F("M50"), F("config_reported"));
   } else {
-    emitStatus("ERR", "unknown_command");
+    emitStatus(F("ERR"), F("unknown_command"));
   }
 }
 
@@ -736,7 +738,7 @@ void updateModeAndTargets() {
     unsigned long nowMs = millis();
 
     if (!digitalRead(downPin)) {
-      emitStatus("ABORT", "start_sequence_stopped");
+      emitStatus(F("ABORT"), F("start_sequence_stopped"));
       delayedStartPending = false;
       enterManualMode();
       return;
@@ -819,7 +821,7 @@ void updateModeAndTargets() {
     setDirectionLow(true);
     targetSpeedSps = slowTestSps;
     if (!digitalRead(downPin)) {
-      emitStatus("ABORT", "slow_test_stopped");
+      emitStatus(F("ABORT"), F("slow_test_stopped"));
       enterManualMode();
     }
   } else if (mode == MODE_MANUAL) {
@@ -827,13 +829,13 @@ void updateModeAndTargets() {
       setDirectionLow(true);
       targetSpeedSps = digitalRead(speedPin) ? jogSlowSps : jogFastSps;
       if (debug) {
-        emitStatus("DBG", "manual_up");
+        emitStatus(F("DBG"), F("manual_up"));
       }
     } else if (!digitalRead(downPin)) {
       setDirectionLow(false);
       targetSpeedSps = digitalRead(speedPin) ? jogSlowSps : jogFastSps;
       if (debug) {
-        emitStatus("DBG", "manual_down");
+        emitStatus(F("DBG"), F("manual_down"));
       }
     } else {
       targetSpeedSps = 0.0f;
@@ -842,7 +844,7 @@ void updateModeAndTargets() {
     setDirectionLow(true);
     targetSpeedSps = fastTestSps;
     if (!digitalRead(downPin)) {
-      emitStatus("ABORT", "fast_test_stopped");
+      emitStatus(F("ABORT"), F("fast_test_stopped"));
       enterManualMode();
     }
   } else if (mode == MODE_YOUNGS) {
@@ -853,7 +855,7 @@ void updateModeAndTargets() {
       targetSpeedSps = fastTestSps;
     }
     if (!digitalRead(downPin)) {
-      emitStatus("ABORT", "youngs_test_stopped");
+      emitStatus(F("ABORT"), F("youngs_test_stopped"));
       enterManualMode();
     }
   } else if (mode == MODE_GOTO_ZERO) {
@@ -871,7 +873,7 @@ void updateModeAndTargets() {
     if (remainingSteps <= 1 && currentSpeedSps < 0.5f) {
       targetSpeedSps = 0.0f;
       enterManualMode();
-      emitStatus("DONE", "at_zero");
+      emitStatus(F("DONE"), F("at_zero"));
     } else if (remainingSteps <= (long)(brakingDistanceSteps + 1.0f)) {
       targetSpeedSps = 0.0f;
     } else if (delta > 0) {
@@ -885,7 +887,7 @@ void updateModeAndTargets() {
     }
 
     if (!digitalRead(downPin)) {
-      emitStatus("ABORT", "goto_zero_stopped");
+      emitStatus(F("ABORT"), F("goto_zero_stopped"));
       enterManualMode();
     }
   } else if (mode == MODE_RELATIVE_MOVE) {
@@ -903,7 +905,7 @@ void updateModeAndTargets() {
     if (remainingSteps <= 1 && currentSpeedSps < 0.5f) {
       targetSpeedSps = 0.0f;
       enterManualMode();
-      emitStatus("DONE", "relative_move_done");
+      emitStatus(F("DONE"), F("relative_move_done"));
     } else if (remainingSteps <= (long)(brakingDistanceSteps + 1.0f)) {
       targetSpeedSps = 0.0f;
     } else if (delta > 0) {
@@ -917,7 +919,7 @@ void updateModeAndTargets() {
     }
 
     if (!digitalRead(downPin)) {
-      emitStatus("ABORT", "relative_move_stopped");
+      emitStatus(F("ABORT"), F("relative_move_stopped"));
       enterManualMode();
     }
   }
@@ -1006,7 +1008,7 @@ void sampleAndStream() {
     if (loweringCounter >= 20.0f) {
       targetSpeedSps = targetSpeedSps * 4.0f;
       modeAddition = 0;
-      emitStatus("MODE", "slow_test_break_detected_speedup");
+      emitStatus(F("MODE"), F("slow_test_break_detected_speedup"));
     }
   } else {
     if (loadValue > maxForce) {
@@ -1025,7 +1027,7 @@ void sampleAndStream() {
     }
 
     if (negativeLoadStreak >= breakDetectConsecutiveSamples) {
-      emitStatus("DONE", "specimen_break_detected");
+      emitStatus(F("DONE"), F("specimen_break_detected"));
       negativeLoadStreak = 0;
       enterManualMode();
       if (tareAfterBreakEnabled) {
@@ -1043,7 +1045,7 @@ void sampleAndStream() {
   interrupts();
   float displacement = (float)(positionSnapshot - zeroStepOffset) / stepsPerMM;
 
-  Serial.print("DATA,");
+  Serial.print(F("DATA,"));
   Serial.print(millis());
   Serial.print(',');
   Serial.print(loadValue, 5);
@@ -1056,3 +1058,4 @@ void sampleAndStream() {
   Serial.print(',');
   Serial.println(currentSpeedSps, 2);
 }
+
