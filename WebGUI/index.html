@@ -28,45 +28,15 @@
         <label class="section-label">Max Load</label>
         <div class="small-metric" id="maxLoad">0 N</div>
 
-        <label class="section-label">Sample Type</label>
-        <select id="testType" class="input full">
-          <option value="rectangular">Rectangular Sample</option>
-          <option value="cylindrical">Cylindical Sample</option>
-          <option value="load">Load Test</option>
-        </select>
-
-        <div class="inline-input short-input">
-          <select id="speedInput" class="input">
-            <option value="1">1</option>
-            <option value="2">2</option>
-            <option value="5">5</option>
-            <option value="10">10</option>
-            <option value="50">50</option>
-          </select>
-          <span><em>mm/min</em> <strong>Speed</strong></span>
+        <button id="newTestBtn" class="btn full">New Sample</button>
+        <div id="sampleSummary" class="sample-summary">
+          <div id="sampleSummaryName" class="sample-summary-line">Name: -</div>
+          <div id="sampleSummaryType" class="sample-summary-line">Type: -</div>
+          <div id="sampleSummaryGeometry" class="sample-summary-line">Geometry: -</div>
         </div>
-
-        <div class="inline-input short-input">
-          <input id="widthInput" class="input" type="number" step="0.01" value="10.00" />
-          <span><em>mm</em> <strong>Width</strong></span>
-        </div>
-
-        <div class="inline-input short-input">
-          <input id="heightInput" class="input" type="number" step="0.01" value="2.00" />
-          <span><em>mm</em> <strong>Thickness</strong></span>
-        </div>
-
-        <div class="inline-input short-input" id="diameterRow">
-          <input id="diameterInput" class="input" type="number" step="0.01" value="5.00" />
-          <span><em>mm</em> <strong>Diameter</strong></span>
-        </div>
-
-        <input id="sampleName" class="input full" placeholder="Sample Name" />
-        <input id="sampleComment" class="input full" placeholder="Comment" />
-
-        <button id="newTestBtn" class="btn full">New Test</button>
-        <button id="startTestBtn" class="btn full strong">START TEST</button>
-        <button id="manualStopBtn" class="btn full">Manual Stop</button>
+        <button id="startTestBtn" class="btn full strong start-highlight">START TEST</button>
+        <button id="manualStopBtn" class="btn full stop-highlight">Stop Test</button>
+        <input id="sampleComment" class="input full manual-stop-gap" placeholder="Comment" />
         <button id="tareBtn" class="btn full">Tare</button>
 
         <div class="split">
@@ -78,6 +48,16 @@
 
         <details class="config-section">
           <summary>Configuration</summary>
+          <div class="inline-input config-speed-row">
+            <select id="speedInput" class="input">
+              <option value="1">1</option>
+              <option value="2">2</option>
+              <option value="5">5</option>
+              <option value="10">10</option>
+              <option value="50">50</option>
+            </select>
+            <span><em>mm/min</em> <strong>Test Speed</strong></span>
+          </div>
           <div class="inline-input">
             <input id="preloadInput" class="input" type="number" step="0.1" value="2.0" />
             <button id="setPreloadBtn" class="btn mini">Set Preload N</button>
@@ -85,6 +65,13 @@
           <div class="inline-input">
             <input id="alphaInput" class="input" type="number" step="0.01" min="0.01" max="1.00" value="0.20" />
             <button id="setAlphaBtn" class="btn mini">Set Filter Alpha</button>
+          </div>
+          <div class="inline-input">
+            <select id="autoBreakInput" class="input">
+              <option value="1">On</option>
+              <option value="0">Off</option>
+            </select>
+            <button id="setAutoBreakBtn" class="btn mini">Set Auto Break</button>
           </div>
           <div class="inline-input">
             <input id="sampleRateInput" class="input" type="number" step="1" value="80" />
@@ -102,6 +89,7 @@
             <input id="accelInput" class="input" type="number" step="0.1" value="30.0" />
             <button id="setAccelBtn" class="btn mini">Set Accel</button>
           </div>
+          <button id="armGainBtn" class="btn mini unlock-gain-btn">Unlock Gain (30s)</button>
           <div class="inline-input">
             <input id="gainInput" class="input" type="number" step="0.1" placeholder="-875.7" />
             <button id="setGainBtn" class="btn mini">Set Gain</button>
@@ -128,6 +116,7 @@
             <canvas id="chartCanvas" width="760" height="440"></canvas>
           </div>
           <div class="jog-panel" aria-label="Manual relative movement">
+            <label class="section-label jog-title">Jog</label>
             <button id="jogPlus10Btn" class="btn mini">+10 mm</button>
             <button id="jogPlus1Btn" class="btn mini">+1 mm</button>
             <button id="jogPlus01Btn" class="btn mini">+0.1 mm</button>
@@ -151,6 +140,41 @@
       <div id="seriesEmpty" class="series-empty">No tests recorded yet.</div>
       <div id="seriesList" class="series-list"></div>
     </section>
+  </div>
+
+  <div id="sampleModal" class="modal-backdrop" aria-hidden="true">
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="sampleModalTitle">
+      <h2 id="sampleModalTitle">Prepare New Sample</h2>
+
+      <label class="section-label" for="testType">Sample Type</label>
+      <select id="testType" class="input full">
+        <option value="rectangular">Rectangular Sample</option>
+        <option value="cylindrical">Cylindical Sample</option>
+        <option value="load">Load Test</option>
+      </select>
+
+      <input id="sampleName" class="input full" placeholder="Sample Name" />
+
+      <div class="inline-input short-input">
+        <input id="widthInput" class="input" type="number" step="0.01" value="" />
+        <span><em>mm</em> <strong>Width</strong></span>
+      </div>
+
+      <div class="inline-input short-input">
+        <input id="heightInput" class="input" type="number" step="0.01" value="" />
+        <span><em>mm</em> <strong>Thickness</strong></span>
+      </div>
+
+      <div class="inline-input short-input" id="diameterRow">
+        <input id="diameterInput" class="input" type="number" step="0.01" value="" />
+        <span><em>mm</em> <strong>Diameter</strong></span>
+      </div>
+
+      <div class="split modal-actions">
+        <button id="sampleModalCancelBtn" class="btn">Cancel</button>
+        <button id="sampleModalSaveBtn" class="btn strong">Confirm</button>
+      </div>
+    </div>
   </div>
 
   <script src="app.js"></script>

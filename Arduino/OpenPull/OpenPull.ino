@@ -41,6 +41,11 @@ float accelSps2 = 4000.0f;
 float gotoZeroSps = 8.0f * baseTestSpeedSps;
 float preloadN = 2.0f;
 float loadFilterAlpha = 0.20f;
+bool autoBreakDetectionEnabled = true;
+const float gainAbsMin = 100.0f;
+const float gainAbsMax = 5000.0f;
+const unsigned long gainWriteDelayMs = 30000UL;
+const unsigned long gainWriteWindowMs = 30000UL;
 
 // Timing
 const unsigned long yMTestTimeMs = 30000UL;
@@ -101,6 +106,9 @@ unsigned long lastAccelUpdateUs = 0;
 unsigned long lastHx711WarnMs = 0;
 unsigned long lastHx711DataMs = 0;
 bool debug = false;
+bool gainWriteArmed = false;
+unsigned long gainWriteAllowedFromMs = 0;
+unsigned long gainWriteAllowedUntilMs = 0;
 
 char serialLine[96];
 uint8_t serialLineIndex = 0;
@@ -125,6 +133,8 @@ void saveConfigToEeprom();
 void emitConfig();
 float computeMedian(const float *values, uint8_t count);
 float getMedianFilteredLoad(float measuredLoad);
+bool isGainPlausible(float gain);
+bool isGainWriteWindowActive();
 
 struct PersistedConfig {
   uint16_t magic;
@@ -138,10 +148,11 @@ struct PersistedConfig {
   float manualFastMmPerMin;
   float preloadN;
   float loadFilterAlpha;
+  uint8_t autoBreakDetectionEnabled;
 };
 
 const uint16_t persistedConfigMagic = 0x504FULL;
-const uint8_t persistedConfigVersion = 2;
+const uint8_t persistedConfigVersion = 3;
 
 ISR(TIMER1_COMPA_vect) {
   if (!motionEnabled) {
@@ -199,6 +210,7 @@ void saveConfigToEeprom() {
   config.manualFastMmPerMin = (jogFastSps / stepsPerMM) * 60.0f;
   config.preloadN = preloadN;
   config.loadFilterAlpha = loadFilterAlpha;
+  config.autoBreakDetectionEnabled = autoBreakDetectionEnabled ? 1 : 0;
   EEPROM.put(0, config);
 }
 
@@ -223,7 +235,7 @@ void loadConfigFromEeprom() {
     accelSps2 = config.accelMmPerS2 * stepsPerMM;
   }
 
-  if (isfinite(config.gain) && config.gain != 0.0f) {
+  if (isGainPlausible(config.gain)) {
     gainValue = config.gain;
   }
 
@@ -250,6 +262,8 @@ void loadConfigFromEeprom() {
   if (isfinite(config.loadFilterAlpha) && config.loadFilterAlpha > 0.0f && config.loadFilterAlpha <= 1.0f) {
     loadFilterAlpha = config.loadFilterAlpha;
   }
+
+  autoBreakDetectionEnabled = config.autoBreakDetectionEnabled != 0;
 }
 
 void emitConfig() {
@@ -272,7 +286,9 @@ void emitConfig() {
   Serial.print(',');
   Serial.print(preloadN, 3);
   Serial.print(',');
-  Serial.println(loadFilterAlpha, 3);
+  Serial.print(loadFilterAlpha, 3);
+  Serial.print(',');
+  Serial.println(autoBreakDetectionEnabled ? 1 : 0);
 }
 
 void loop() {
@@ -424,6 +440,26 @@ float getMedianFilteredLoad(float measuredLoad) {
   return computeMedian(orderedWindow, hx711RawWindowCount);
 }
 
+bool isGainPlausible(float gain) {
+  if (!isfinite(gain)) {
+    return false;
+  }
+  float absGain = fabs(gain);
+  return absGain >= gainAbsMin && absGain <= gainAbsMax;
+}
+
+bool isGainWriteWindowActive() {
+  if (!gainWriteArmed) {
+    return false;
+  }
+  unsigned long nowMs = millis();
+  if ((long)(gainWriteAllowedUntilMs - nowMs) <= 0) {
+    gainWriteArmed = false;
+    return false;
+  }
+  return (long)(nowMs - gainWriteAllowedFromMs) >= 0;
+}
+
 void processSerial() {
   while (Serial.available() > 0) {
     char c = (char)Serial.read();
@@ -542,14 +578,35 @@ void processCommand(char *line) {
     } else {
       emitStatus("ERR", "invalid_accel");
     }
+  } else if (strcmp(cmd, "M53") == 0) {
+    if (mode != MODE_MANUAL || delayedStartPending) {
+      emitStatus("ERR", "gain_arm_only_manual");
+    } else {
+      gainWriteArmed = true;
+      gainWriteAllowedFromMs = millis() + gainWriteDelayMs;
+      gainWriteAllowedUntilMs = gainWriteAllowedFromMs + gainWriteWindowMs;
+      emitAck("M53", "gain_set_wait_30s_then_30s_window");
+    }
   } else if (strcmp(cmd, "M43") == 0 && arg1 != NULL) {
+    if (gainWriteArmed && (long)(millis() - gainWriteAllowedFromMs) < 0) {
+      emitStatus("ERR", "gain_wait_not_elapsed");
+      return;
+    }
+
+    if (!isGainWriteWindowActive()) {
+      gainWriteArmed = false;
+      emitStatus("ERR", "gain_locked_use_m53");
+      return;
+    }
+
     float newGain = atof(arg1);
-    if (newGain != 0.0f) {
+    if (isGainPlausible(newGain)) {
       gainValue = newGain;
+      gainWriteArmed = false;
       saveConfigToEeprom();
       emitAck("M43", "gain_set");
     } else {
-      emitStatus("ERR", "invalid_gain");
+      emitStatus("ERR", "invalid_gain_range");
     }
   } else if (strcmp(cmd, "M44") == 0 && arg1 != NULL) {
     float sampleRateHz = atof(arg1);
@@ -599,6 +656,15 @@ void processCommand(char *line) {
       emitAck("M48", "filter_alpha_set");
     } else {
       emitStatus("ERR", "invalid_filter_alpha");
+    }
+  } else if (strcmp(cmd, "M49") == 0 && arg1 != NULL) {
+    int enabled = atoi(arg1);
+    if (enabled == 0 || enabled == 1) {
+      autoBreakDetectionEnabled = enabled == 1;
+      saveConfigToEeprom();
+      emitAck("M49", autoBreakDetectionEnabled ? "auto_break_enabled" : "auto_break_disabled");
+    } else {
+      emitStatus("ERR", "invalid_auto_break_value");
     }
   } else if (strcmp(cmd, "M50") == 0) {
     emitConfig();
@@ -873,7 +939,7 @@ void sampleAndStream() {
   }
   digitalWrite(led1Pin, LOW);
 
-  if (mode == MODE_TEST_SLOW && modeAddition == 1) {
+  if (autoBreakDetectionEnabled && mode == MODE_TEST_SLOW && modeAddition == 1) {
     if (loadValue >= maxForce) {
       maxForce = loadValue;
       loweringCounter = 0.0f;
@@ -892,7 +958,7 @@ void sampleAndStream() {
   }
 
   bool inActiveTest = (mode == MODE_TEST_SLOW || mode == MODE_TEST_FAST || mode == MODE_YOUNGS);
-  if (inActiveTest) {
+  if (inActiveTest && autoBreakDetectionEnabled) {
     if (maxForce >= breakDetectMinPeakForceN && loadValue <= breakDetectNegativeThresholdN) {
       if (negativeLoadStreak < 255) {
         negativeLoadStreak++;

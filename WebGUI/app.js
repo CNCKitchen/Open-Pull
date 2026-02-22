@@ -18,9 +18,16 @@ const diameterInputEl = document.getElementById('diameterInput');
 const stressCardEl = document.getElementById('stressCard');
 const sampleNameEl = document.getElementById('sampleName');
 const sampleCommentEl = document.getElementById('sampleComment');
+const sampleModalEl = document.getElementById('sampleModal');
+const sampleModalCancelBtn = document.getElementById('sampleModalCancelBtn');
+const sampleModalSaveBtn = document.getElementById('sampleModalSaveBtn');
+const sampleSummaryNameEl = document.getElementById('sampleSummaryName');
+const sampleSummaryTypeEl = document.getElementById('sampleSummaryType');
+const sampleSummaryGeometryEl = document.getElementById('sampleSummaryGeometry');
 const preloadInputEl = document.getElementById('preloadInput');
 const alphaInputEl = document.getElementById('alphaInput');
 const sampleRateInputEl = document.getElementById('sampleRateInput');
+const autoBreakInputEl = document.getElementById('autoBreakInput');
 const manualSlowInputEl = document.getElementById('manualSlowInput');
 const manualFastInputEl = document.getElementById('manualFastInput');
 const accelInputEl = document.getElementById('accelInput');
@@ -37,9 +44,11 @@ const exportBtn = document.getElementById('exportBtn');
 const setPreloadBtn = document.getElementById('setPreloadBtn');
 const setAlphaBtn = document.getElementById('setAlphaBtn');
 const setSampleRateBtn = document.getElementById('setSampleRateBtn');
+const setAutoBreakBtn = document.getElementById('setAutoBreakBtn');
 const setManualSlowBtn = document.getElementById('setManualSlowBtn');
 const setManualFastBtn = document.getElementById('setManualFastBtn');
 const setAccelBtn = document.getElementById('setAccelBtn');
+const armGainBtn = document.getElementById('armGainBtn');
 const setGainBtn = document.getElementById('setGainBtn');
 const jogPlus10Btn = document.getElementById('jogPlus10Btn');
 const jogPlus1Btn = document.getElementById('jogPlus1Btn');
@@ -79,6 +88,9 @@ let serialMonitorLines = [];
 let configSyncTimeoutId = null;
 let hasReceivedMachineData = false;
 let breakTailFinalizeTimeoutId = null;
+let gainUiUnlockReadyAtMs = 0;
+let gainUiUnlockDeadlineMs = 0;
+let gainUiUnlockTimerId = null;
 
 const seriesState = {
   version: 1,
@@ -110,6 +122,67 @@ function resizeCanvasToDisplaySize() {
 
 function setStatus(text) {
   statusLine.textContent = `STATUS: ${text}`;
+}
+
+function updateGainButtonLockState() {
+  if (!setGainBtn) {
+    return;
+  }
+
+  const nowMs = Date.now();
+  const waitRemainingMs = gainUiUnlockReadyAtMs - nowMs;
+  const activeRemainingMs = gainUiUnlockDeadlineMs - nowMs;
+
+  if (waitRemainingMs > 0) {
+    if (gainInputEl) {
+      gainInputEl.disabled = true;
+    }
+    setGainBtn.disabled = true;
+    const waitSec = Math.max(1, Math.ceil(waitRemainingMs / 1000));
+    setGainBtn.textContent = `Set Gain (Wait ${waitSec}s)`;
+    return;
+  }
+
+  if (gainInputEl) {
+    gainInputEl.disabled = false;
+  }
+
+  const unlocked = activeRemainingMs > 0;
+  setGainBtn.disabled = !unlocked;
+
+  if (!unlocked) {
+    setGainBtn.textContent = 'Set Gain (Locked)';
+    return;
+  }
+
+  const remainingSec = Math.max(1, Math.ceil(activeRemainingMs / 1000));
+  setGainBtn.textContent = `Set Gain (${remainingSec}s)`;
+}
+
+function clearGainUiUnlock() {
+  gainUiUnlockReadyAtMs = 0;
+  gainUiUnlockDeadlineMs = 0;
+  if (gainUiUnlockTimerId) {
+    clearInterval(gainUiUnlockTimerId);
+    gainUiUnlockTimerId = null;
+  }
+  updateGainButtonLockState();
+}
+
+function startGainUiUnlockWindow(waitMs = 30000, activeMs = 30000) {
+  gainUiUnlockReadyAtMs = Date.now() + waitMs;
+  gainUiUnlockDeadlineMs = gainUiUnlockReadyAtMs + activeMs;
+  if (gainUiUnlockTimerId) {
+    clearInterval(gainUiUnlockTimerId);
+  }
+  gainUiUnlockTimerId = setInterval(() => {
+    if (gainUiUnlockDeadlineMs <= Date.now()) {
+      clearGainUiUnlock();
+      return;
+    }
+    updateGainButtonLockState();
+  }, 250);
+  updateGainButtonLockState();
 }
 
 function scheduleMachineConfigSync() {
@@ -259,7 +332,7 @@ function getValidationErrors() {
   }
 
   if (!seriesState.readyForStart) {
-    errors.push('press New Test before START TEST');
+    errors.push('press New Sample before START TEST');
   }
 
   if (!sampleName) {
@@ -324,13 +397,131 @@ function getConfiguredPositiveNumber(inputEl, decimals = 1) {
   return rounded;
 }
 
-function clearSampleFieldsForNextTest() {
-  sampleNameEl.value = '';
-  sampleCommentEl.value = '';
+function clearGeometryFieldsForNextTest() {
   widthInputEl.value = '';
   heightInputEl.value = '';
   diameterInputEl.value = '';
+  renderSampleSummary();
+}
+
+function resetSampleDraftInputs() {
+  sampleNameEl.value = '';
+  sampleCommentEl.value = '';
+  clearGeometryFieldsForNextTest();
+}
+
+function openSampleModal() {
+  if (!sampleModalEl) {
+    return;
+  }
+  sampleModalEl.classList.add('open');
+  sampleModalEl.setAttribute('aria-hidden', 'false');
+  if (sampleNameEl) {
+    sampleNameEl.focus();
+    sampleNameEl.select();
+  }
+}
+
+function formatSummaryNumber(value) {
+  if (!Number.isFinite(value)) {
+    return '-';
+  }
+  return Number(value.toFixed(2)).toString();
+}
+
+function renderSampleSummary() {
+  if (!sampleSummaryNameEl || !sampleSummaryTypeEl || !sampleSummaryGeometryEl) {
+    return;
+  }
+
+  const meta = getGeometryFromInputs();
+  const sampleName = (sampleNameEl.value || '').trim();
+  const sampleTypeLabel =
+    meta.testType === 'rectangular' ? 'Rectangular' :
+      meta.testType === 'cylindrical' ? 'Cylindrical' :
+        meta.testType === 'load' ? 'Load Test' : '-';
+
+  sampleSummaryNameEl.textContent = `Name: ${sampleName || '-'}`;
+  sampleSummaryTypeEl.textContent = `Type: ${sampleTypeLabel}`;
+
+  if (meta.testType === 'load') {
+    sampleSummaryGeometryEl.textContent = 'n/a (load test)';
+    return;
+  }
+
+  if (meta.testType === 'cylindrical') {
+    sampleSummaryGeometryEl.textContent = `Diameter ${formatSummaryNumber(meta.diameterMm)} mm`;
+    return;
+  }
+
+  sampleSummaryGeometryEl.textContent = `Width ${formatSummaryNumber(meta.widthMm)} mm, Thickness ${formatSummaryNumber(meta.thicknessMm)} mm`;
+}
+
+function closeSampleModal() {
+  if (!sampleModalEl) {
+    return;
+  }
+  sampleModalEl.classList.remove('open');
+  sampleModalEl.setAttribute('aria-hidden', 'true');
+}
+
+function getSampleSetupValidationErrors() {
+  const errors = [];
+  const sampleName = (sampleNameEl.value || '').trim();
+  const meta = getGeometryFromInputs();
+
+  if (!sampleName) {
+    errors.push('sample name required');
+  }
+
+  if (!meta.testType) {
+    errors.push('sample type required');
+  }
+
+  if (meta.testType === 'cylindrical') {
+    if (!Number.isFinite(meta.diameterMm) || meta.diameterMm <= 0) {
+      errors.push('valid diameter required');
+    }
+  } else if (meta.testType !== 'load') {
+    if (!Number.isFinite(meta.widthMm) || meta.widthMm <= 0) {
+      errors.push('valid width required');
+    }
+    if (!Number.isFinite(meta.thicknessMm) || meta.thicknessMm <= 0) {
+      errors.push('valid thickness required');
+    }
+  }
+
+  return errors;
+}
+
+function persistCommentToCurrentTest() {
+  const activeTest = getActiveTest();
+  if (!activeTest || !activeTest.meta) {
+    return;
+  }
+
+  const nextComment = (sampleCommentEl.value || '').trim();
+  if ((activeTest.meta.sampleComment || '') === nextComment) {
+    return;
+  }
+
+  activeTest.meta.sampleComment = nextComment;
+  schedulePersistState();
+}
+
+function prepareNewTestFromModal() {
+  const errors = getSampleSetupValidationErrors();
+  if (errors.length > 0) {
+    setStatus(errors[0]);
+    return;
+  }
+
+  seriesState.readyForStart = true;
+  closeSampleModal();
+  renderSampleSummary();
+  schedulePersistState();
   updateStartButtonState();
+  setStatus('new_sample_ready_press_start');
 }
 
 function resetMetricsDisplay() {
@@ -401,7 +592,7 @@ function mapCompletionReasonToStatus(reason) {
 }
 
 function getStatusLabel(status) {
-  if (status === 'break_detected') return 'AUTO BREAK';
+  if (status === 'break_detected') return 'BREAK DETECTED';
   if (status === 'manual_stopped') return 'MANUAL STOP';
   if (status === 'failed') return 'FAILED';
   if (status === 'running') return 'RUNNING';
@@ -707,6 +898,7 @@ function applyTestTypeUiState() {
     stressCardEl.classList.remove('disabled');
   }
 
+  renderSampleSummary();
   updateStartButtonState();
 }
 
@@ -819,9 +1011,10 @@ function beginNewSeries() {
   seriesState.overlaySelection = {};
   lastIncomingMode = MANUAL_MODE_VALUE;
 
-  clearSampleFieldsForNextTest();
+  resetSampleDraftInputs();
+  closeSampleModal();
   resetMetricsDisplay();
-  setStatus('series_created_press_new_test');
+  setStatus('series_created_press_new_sample');
   schedulePersistState();
   refreshUi();
 }
@@ -839,8 +1032,9 @@ async function beginNewTest() {
   }
 
   seriesState.activeTestId = null;
-  seriesState.readyForStart = true;
-  clearSampleFieldsForNextTest();
+  seriesState.readyForStart = false;
+  clearGeometryFieldsForNextTest();
+  applyTestTypeUiState();
   resetMetricsDisplay();
   renderChart();
   schedulePersistState();
@@ -849,7 +1043,8 @@ async function beginNewTest() {
   if (serialWriter) {
     await sendCommand('M11');
   }
-  setStatus('new_test_ready_fill_fields');
+  openSampleModal();
+  setStatus('new_sample_fill_popup');
 }
 
 function createTestFromCurrentInputs() {
@@ -968,6 +1163,7 @@ function applyMachineConfigFromParts(parts) {
   const manualFastMmPerMin = parseFlexibleNumber(parts[8]);
   const preloadN = parseFlexibleNumber(parts[9]);
   const alpha = parseFlexibleNumber(parts[10]);
+  const autoBreakEnabled = parseInt(parts[11], 10);
 
   if (Number.isFinite(preloadN) && preloadInputEl) {
     preloadInputEl.value = preloadN.toFixed(1);
@@ -987,6 +1183,10 @@ function applyMachineConfigFromParts(parts) {
 
   if (Number.isFinite(sampleRateHz) && sampleRateInputEl) {
     sampleRateInputEl.value = sampleRateHz.toFixed(1);
+  }
+
+  if (autoBreakInputEl && (autoBreakEnabled === 0 || autoBreakEnabled === 1)) {
+    autoBreakInputEl.value = String(autoBreakEnabled);
   }
 
   if (Number.isFinite(manualSlowMmPerMin) && manualSlowInputEl) {
@@ -1084,6 +1284,14 @@ function parseLine(line) {
     const command = parts[2];
     const message = parts.slice(3).join(',');
     setStatus(`ACK ${command} ${message}`);
+
+    if (command === 'M53' && message === 'gain_set_wait_30s_then_30s_window') {
+      startGainUiUnlockWindow(30000, 30000);
+    }
+
+    if (command === 'M43' && message === 'gain_set') {
+      clearGainUiUnlock();
+    }
 
     if (command === 'M11') {
       const activeTest = getActiveTest();
@@ -1218,6 +1426,7 @@ async function disconnectSerial() {
   } catch (_) {}
 
   connectBtn.textContent = 'Connect';
+  clearGainUiUnlock();
   setConnectionBadge(false);
   updateStartButtonState();
   appendSerialMonitorLine('[port] disconnected');
@@ -1399,8 +1608,19 @@ gotoZeroBtn.addEventListener('click', async () => {
   await sendCommand('M21');
 });
 
+if (armGainBtn) {
+  armGainBtn.addEventListener('click', async () => {
+    await sendCommand('M53');
+  });
+}
+
 if (setGainBtn && gainInputEl) {
   setGainBtn.addEventListener('click', async () => {
+    if (setGainBtn.disabled) {
+      const waiting = gainUiUnlockReadyAtMs > Date.now();
+      setStatus(waiting ? 'gain_wait_for_unlock_countdown' : 'gain_locked_press_unlock_gain');
+      return;
+    }
     const gain = parseFlexibleNumber(gainInputEl.value);
     if (!Number.isFinite(gain) || gain === 0) {
       setStatus('invalid_gain');
@@ -1458,6 +1678,13 @@ if (setAlphaBtn && alphaInputEl) {
   });
 }
 
+if (setAutoBreakBtn && autoBreakInputEl) {
+  setAutoBreakBtn.addEventListener('click', async () => {
+    const enabled = autoBreakInputEl.value === '1' ? 1 : 0;
+    await sendCommand(`M49 ${enabled}`);
+  });
+}
+
 if (setManualSlowBtn && manualSlowInputEl) {
   setManualSlowBtn.addEventListener('click', async () => {
     const manualSlowMmPerMin = getConfiguredPositiveNumber(manualSlowInputEl, 1);
@@ -1502,17 +1729,65 @@ testTypeEl.addEventListener('change', () => {
 });
 
 [speedInputEl, widthInputEl, heightInputEl, diameterInputEl, sampleNameEl].forEach(el => {
-  el.addEventListener('input', updateStartButtonState);
+  el.addEventListener('input', () => {
+    renderSampleSummary();
+    updateStartButtonState();
+  });
 });
+
+if (sampleModalSaveBtn) {
+  sampleModalSaveBtn.addEventListener('click', prepareNewTestFromModal);
+}
+
+if (sampleModalCancelBtn) {
+  sampleModalCancelBtn.addEventListener('click', () => {
+    closeSampleModal();
+    setStatus('new_sample_cancelled');
+  });
+}
+
+if (sampleModalEl) {
+  sampleModalEl.addEventListener('click', event => {
+    if (event.target === sampleModalEl) {
+      closeSampleModal();
+    }
+  });
+}
+
+window.addEventListener('keydown', event => {
+  if (!sampleModalEl || !sampleModalEl.classList.contains('open')) {
+    return;
+  }
+
+  if (event.key === 'Escape') {
+    event.preventDefault();
+    closeSampleModal();
+    setStatus('new_sample_cancelled');
+    return;
+  }
+
+  if (event.key === 'Enter') {
+    event.preventDefault();
+    prepareNewTestFromModal();
+  }
+});
+
+if (sampleCommentEl) {
+  sampleCommentEl.addEventListener('input', () => {
+    persistCommentToCurrentTest();
+  });
+}
 
 window.addEventListener('resize', renderChart);
 window.addEventListener('beforeunload', persistStateNow);
 
 exportBtn.addEventListener('click', exportSeriesCsv);
 
+clearGainUiUnlock();
 restoreStateFromStorage();
 setConnectionBadge(false);
 applyTestTypeUiState();
+renderSampleSummary();
 refreshUi();
 if (!seriesState.seriesId) {
   setStatus('ready_create_series');

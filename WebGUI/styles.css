@@ -256,6 +256,31 @@ select.input {
   margin-bottom: 0;
 }
 
+.config-section .inline-input.config-speed-row {
+  grid-template-columns: 88px minmax(0, 1fr);
+}
+
+.config-section .inline-input.config-speed-row span {
+  text-align: center;
+  justify-self: center;
+}
+
+#speedInput {
+  text-align: left;
+  text-align-last: left;
+  -moz-text-align-last: left;
+}
+
+#speedInput option {
+  text-align: left;
+}
+
+.config-section .unlock-gain-btn {
+  width: 100%;
+  margin-top: 8px;
+  margin-bottom: 0;
+}
+
 .btn {
   border: none;
   border-radius: 10px;
@@ -294,6 +319,25 @@ select.input {
   background: #8ab5ff;
 }
 
+.btn.start-highlight {
+  background: #7dcf9b;
+  color: #0f2a1a;
+}
+
+.btn.start-highlight:hover {
+  background: #8fdaaa;
+}
+
+.btn.stop-highlight {
+  background: #c9974e;
+  color: #2d1f0d;
+  font-weight: 700;
+}
+
+.btn.stop-highlight:hover {
+  background: #d7a960;
+}
+
 .btn.mini {
   height: 44px;
   font-size: 15px;
@@ -315,6 +359,23 @@ select.input {
   grid-template-columns: 1fr 1fr;
   gap: 10px;
   margin-bottom: 10px;
+}
+
+.sample-summary {
+  background: #101a2c;
+  border-radius: 10px;
+  padding: 8px 10px;
+  margin-bottom: 10px;
+}
+
+.sample-summary-line {
+  color: #c6d5f5;
+  font-size: 13px;
+  line-height: 1.35;
+}
+
+.manual-stop-gap {
+  margin-bottom: 18px;
 }
 
 .metrics-grid {
@@ -356,10 +417,16 @@ select.input {
 
 .jog-panel {
   display: grid;
-  grid-template-rows: repeat(6, 36px);
+  grid-template-rows: auto repeat(6, 36px);
   gap: 6px;
-  align-content: center;
+  align-content: start;
   min-height: 0;
+}
+
+.jog-panel .jog-title {
+  margin-bottom: 2px;
+  text-align: center;
+  font-weight: 700;
 }
 
 .jog-panel .btn {
@@ -502,13 +569,46 @@ select.input {
 }
 
 .series-badge.break-detected {
-  background: #3c3256;
-  color: #d3c7ff;
+  background: #1f4a30;
+  color: #baf6ce;
 }
 
 .series-badge.failed {
   background: #5a1f1f;
   color: #ffd3d3;
+}
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  background: rgba(7, 11, 19, 0.72);
+  z-index: 50;
+}
+
+.modal-backdrop.open {
+  display: flex;
+}
+
+.modal {
+  width: min(460px, 100%);
+  background: var(--surface-2);
+  border-radius: 14px;
+  padding: 14px;
+  box-shadow: 0 18px 38px rgba(0, 0, 0, 0.35);
+}
+
+.modal h2 {
+  margin: 0 0 12px;
+  font-size: 20px;
+  font-weight: 650;
+}
+
+.modal .modal-actions {
+  margin-bottom: 0;
 }
 
 @media (max-width: 1200px) {
