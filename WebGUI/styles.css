@@ -207,6 +207,16 @@ select.input {
   white-space: nowrap;
 }
 
+.inline-input span em {
+  font-style: italic;
+  font-weight: 500;
+  margin-right: 4px;
+}
+
+.inline-input span strong {
+  font-weight: 650;
+}
+
 .inline-input.disabled span {
   color: #6f82a8;
 }
@@ -392,6 +402,10 @@ select.input {
   background: var(--surface-2);
 }
 
+.series-panel .new-series-in-list {
+  margin-bottom: 12px;
+}
+
 .series-head {
   display: flex;
   align-items: center;
@@ -483,8 +497,8 @@ select.input {
 }
 
 .series-badge.manual-stopped {
-  background: #4a2f32;
-  color: #f4c3c6;
+  background: #4b4321;
+  color: #ffe69a;
 }
 
 .series-badge.break-detected {

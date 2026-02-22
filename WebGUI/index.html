@@ -43,28 +43,27 @@
             <option value="10">10</option>
             <option value="50">50</option>
           </select>
-          <span>mm/min Speed</span>
+          <span><em>mm/min</em> <strong>Speed</strong></span>
         </div>
 
         <div class="inline-input short-input">
           <input id="widthInput" class="input" type="number" step="0.01" value="10.00" />
-          <span>mm Width</span>
+          <span><em>mm</em> <strong>Width</strong></span>
         </div>
 
         <div class="inline-input short-input">
           <input id="heightInput" class="input" type="number" step="0.01" value="2.00" />
-          <span>mm Height</span>
+          <span><em>mm</em> <strong>Thickness</strong></span>
         </div>
 
         <div class="inline-input short-input" id="diameterRow">
           <input id="diameterInput" class="input" type="number" step="0.01" value="5.00" />
-          <span>mm Diameter</span>
+          <span><em>mm</em> <strong>Diameter</strong></span>
         </div>
 
         <input id="sampleName" class="input full" placeholder="Sample Name" />
         <input id="sampleComment" class="input full" placeholder="Comment" />
 
-        <button id="newSeriesBtn" class="btn full">New Series</button>
         <button id="newTestBtn" class="btn full">New Test</button>
         <button id="startTestBtn" class="btn full strong">START TEST</button>
         <button id="manualStopBtn" class="btn full">Manual Stop</button>
@@ -148,6 +147,7 @@
         <label class="section-label">Performed Tests In Series</label>
         <span class="series-id" id="seriesIdLabel">No active series</span>
       </div>
+      <button id="newSeriesBtn" class="btn full new-series-in-list">New Series</button>
       <div id="seriesEmpty" class="series-empty">No tests recorded yet.</div>
       <div id="seriesList" class="series-list"></div>
     </section>

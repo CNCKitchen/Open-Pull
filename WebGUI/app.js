@@ -203,14 +203,14 @@ function getGeometryFromInputs() {
   const testType = testTypeEl.value;
   const speedMmMin = parseFlexibleNumber(speedInputEl.value);
   const widthMm = parseFlexibleNumber(widthInputEl.value);
-  const heightMm = parseFlexibleNumber(heightInputEl.value);
+  const thicknessMm = parseFlexibleNumber(heightInputEl.value);
   const diameterMm = parseFlexibleNumber(diameterInputEl.value);
 
   return {
     testType,
     speedMmMin,
     widthMm,
-    heightMm,
+    thicknessMm,
     diameterMm
   };
 }
@@ -228,11 +228,13 @@ function getAreaMm2FromMeta(meta) {
     return Math.PI * radius * radius;
   }
 
-  if (!Number.isFinite(meta.widthMm) || !Number.isFinite(meta.heightMm) || meta.widthMm <= 0 || meta.heightMm <= 0) {
+  const thicknessMm = Number.isFinite(meta.thicknessMm) ? meta.thicknessMm : meta.heightMm;
+
+  if (!Number.isFinite(meta.widthMm) || !Number.isFinite(thicknessMm) || meta.widthMm <= 0 || thicknessMm <= 0) {
     return null;
   }
 
-  return meta.widthMm * meta.heightMm;
+  return meta.widthMm * thicknessMm;
 }
 
 function getCurrentFormAreaMm2() {
@@ -277,8 +279,8 @@ function getValidationErrors() {
     if (!Number.isFinite(meta.widthMm) || meta.widthMm <= 0) {
       errors.push('valid width required');
     }
-    if (!Number.isFinite(meta.heightMm) || meta.heightMm <= 0) {
-      errors.push('valid height required');
+    if (!Number.isFinite(meta.thicknessMm) || meta.thicknessMm <= 0) {
+      errors.push('valid thickness required');
     }
   }
 
@@ -647,10 +649,19 @@ function restoreStateFromStorage() {
 
     seriesState.seriesId = typeof parsed.seriesId === 'string' ? parsed.seriesId : null;
     seriesState.createdAtIso = typeof parsed.createdAtIso === 'string' ? parsed.createdAtIso : null;
-    seriesState.tests = parsed.tests.map(test => ({
-      ...test,
-      status: normalizeTestStatus(test?.status)
-    }));
+    seriesState.tests = parsed.tests.map(test => {
+      const meta = test?.meta && typeof test.meta === 'object' ? test.meta : {};
+      const thicknessMm = Number.isFinite(meta.thicknessMm) ? meta.thicknessMm : meta.heightMm;
+
+      return {
+        ...test,
+        meta: {
+          ...meta,
+          thicknessMm
+        },
+        status: normalizeTestStatus(test?.status)
+      };
+    });
     seriesState.activeTestId = typeof parsed.activeTestId === 'string' ? parsed.activeTestId : null;
     seriesState.readyForStart = !!parsed.readyForStart;
     seriesState.overlaySelection = parsed.overlaySelection && typeof parsed.overlaySelection === 'object'
@@ -730,7 +741,11 @@ function renderSeriesList() {
 
   seriesEmptyEl.style.display = 'none';
 
-  seriesState.tests.forEach((test, idx) => {
+  const totalTests = seriesState.tests.length;
+  const testsNewestFirst = [...seriesState.tests].reverse();
+
+  testsNewestFirst.forEach((test, reverseIdx) => {
+    const originalIdx = totalTests - 1 - reverseIdx;
     const row = document.createElement('div');
     row.className = 'series-row';
 
@@ -749,7 +764,7 @@ function renderSeriesList() {
 
     const title = document.createElement('div');
     title.className = 'series-row-title';
-    title.textContent = `${idx + 1}. ${getTestDisplayLabel(test, idx)}`;
+    title.textContent = `${originalIdx + 1}. ${getTestDisplayLabel(test, originalIdx)}`;
 
     const sub = document.createElement('div');
     sub.className = 'series-row-sub';
@@ -852,7 +867,7 @@ function createTestFromCurrentInputs() {
       testType: geometry.testType,
       speedMmMin: geometry.speedMmMin,
       widthMm: geometry.widthMm,
-      heightMm: geometry.heightMm,
+      thicknessMm: geometry.thicknessMm,
       diameterMm: geometry.diameterMm
     },
     samples: []
@@ -1099,7 +1114,6 @@ async function connectSerial() {
 
     connectBtn.textContent = 'Disconnect';
     setConnectionBadge(true);
-    updateStartButtonState();
     setStatus('connected');
     appendSerialMonitorLine('[port] connected');
     readSerialLoop();
@@ -1186,6 +1200,7 @@ function getSeriesExportRows() {
     }
 
     const t0 = samples[0].timestampMs;
+    const thicknessMm = Number.isFinite(test.meta.thicknessMm) ? test.meta.thicknessMm : test.meta.heightMm;
     samples.forEach(sample => {
       rows.push([
         seriesState.seriesId,
@@ -1197,7 +1212,7 @@ function getSeriesExportRows() {
         test.meta.testType,
         Number.isFinite(test.meta.speedMmMin) ? test.meta.speedMmMin : '',
         Number.isFinite(test.meta.widthMm) ? test.meta.widthMm : '',
-        Number.isFinite(test.meta.heightMm) ? test.meta.heightMm : '',
+        Number.isFinite(thicknessMm) ? thicknessMm : '',
         Number.isFinite(test.meta.diameterMm) ? test.meta.diameterMm : '',
         sample.timestampMs,
         formatNum((sample.timestampMs - t0) / 1000, 4),
@@ -1236,7 +1251,7 @@ function exportSeriesCsv() {
     'test_type',
     'speed_mm_per_min',
     'width_mm',
-    'height_mm',
+      'thickness_mm',
     'diameter_mm',
     'timestamp_ms',
     'relative_time_s',
