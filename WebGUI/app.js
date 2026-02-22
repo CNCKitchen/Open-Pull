@@ -62,6 +62,8 @@ const MAX_SAMPLES_PER_TEST = 5000;
 const OVERLAY_COLORS = ['#ff9f6c', '#8ce99a', '#d0a6ff', '#6ee7ff', '#ffd166', '#ff8fab'];
 const LOAD_SPIKE_JUMP_THRESHOLD_N = 300;
 const MAX_SERIAL_MONITOR_LINES = 250;
+const BREAK_TAIL_SAMPLES = 2;
+const BREAK_TAIL_TIMEOUT_MS = 1000;
 
 let serialPort = null;
 let serialReader = null;
@@ -76,6 +78,7 @@ let lastAcceptedLoadN = null;
 let serialMonitorLines = [];
 let configSyncTimeoutId = null;
 let hasReceivedMachineData = false;
+let breakTailFinalizeTimeoutId = null;
 
 const seriesState = {
   version: 1,
@@ -880,12 +883,43 @@ function markActiveTestFinished(reason) {
     return;
   }
 
+  if (breakTailFinalizeTimeoutId) {
+    clearTimeout(breakTailFinalizeTimeoutId);
+    breakTailFinalizeTimeoutId = null;
+  }
+
+  if (activeTest) {
+    delete activeTest.pendingBreakTailSamples;
+  }
+
   activeTest.status = mapCompletionReasonToStatus(reason);
   activeTest.finishedAtIso = new Date().toISOString();
   activeTest.completionReason = reason;
   seriesState.readyForStart = false;
   schedulePersistState();
   refreshUi();
+}
+
+function scheduleBreakTailFinalize() {
+  const activeTest = getActiveTest();
+  if (!isRunningTest(activeTest)) {
+    return;
+  }
+
+  activeTest.pendingBreakTailSamples = BREAK_TAIL_SAMPLES;
+
+  if (breakTailFinalizeTimeoutId) {
+    clearTimeout(breakTailFinalizeTimeoutId);
+  }
+
+  breakTailFinalizeTimeoutId = setTimeout(() => {
+    breakTailFinalizeTimeoutId = null;
+    const runningTest = getActiveTest();
+    if (!isRunningTest(runningTest)) {
+      return;
+    }
+    markActiveTestFinished('break_detected');
+  }, BREAK_TAIL_TIMEOUT_MS);
 }
 
 function appendDataToActiveTest(sample) {
@@ -905,6 +939,14 @@ function appendDataToActiveTest(sample) {
   activeTest.samples.push(sample);
   if (activeTest.samples.length > MAX_SAMPLES_PER_TEST) {
     activeTest.samples.shift();
+  }
+
+  if (Number.isFinite(activeTest.pendingBreakTailSamples) && activeTest.pendingBreakTailSamples > 0) {
+    activeTest.pendingBreakTailSamples -= 1;
+    if (activeTest.pendingBreakTailSamples <= 0) {
+      markActiveTestFinished('break_detected');
+      return;
+    }
   }
 
   updateMetricsFromTest(activeTest);
@@ -1005,7 +1047,12 @@ function parseLine(line) {
     });
 
     if (TEST_MODE_VALUES.has(lastIncomingMode) && mode === MANUAL_MODE_VALUE) {
-      markActiveTestFinished('finished');
+      const activeTest = getActiveTest();
+      if (isRunningTest(activeTest) && Number.isFinite(activeTest.pendingBreakTailSamples) && activeTest.pendingBreakTailSamples > 0) {
+        markActiveTestFinished('break_detected');
+      } else {
+        markActiveTestFinished('finished');
+      }
       setStatus('test_finished_press_new_test');
     }
 
@@ -1027,7 +1074,8 @@ function parseLine(line) {
     }
 
     if (code === 'DONE' && message === 'specimen_break_detected') {
-      markActiveTestFinished('break_detected');
+      scheduleBreakTailFinalize();
+      setStatus('break_detected_capturing_tail_samples');
     }
     return;
   }
