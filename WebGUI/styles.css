@@ -354,6 +354,16 @@ select.input {
   background: #f16464;
 }
 
+.btn.pending-set {
+  background: #b98a43;
+  color: #2f1f08;
+  font-weight: 700;
+}
+
+.btn.pending-set:hover {
+  background: #c69852;
+}
+
 .split {
   display: grid;
   grid-template-columns: 1fr 1fr;

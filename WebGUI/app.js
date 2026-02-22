@@ -92,6 +92,19 @@ let gainUiUnlockReadyAtMs = 0;
 let gainUiUnlockDeadlineMs = 0;
 let gainUiUnlockTimerId = null;
 
+const configSetBindings = [
+  { command: 'M47', inputEl: preloadInputEl, buttonEl: setPreloadBtn, appliedValue: '' },
+  { command: 'M48', inputEl: alphaInputEl, buttonEl: setAlphaBtn, appliedValue: '' },
+  { command: 'M49', inputEl: autoBreakInputEl, buttonEl: setAutoBreakBtn, appliedValue: '' },
+  { command: 'M44', inputEl: sampleRateInputEl, buttonEl: setSampleRateBtn, appliedValue: '' },
+  { command: 'M45', inputEl: manualSlowInputEl, buttonEl: setManualSlowBtn, appliedValue: '' },
+  { command: 'M46', inputEl: manualFastInputEl, buttonEl: setManualFastBtn, appliedValue: '' },
+  { command: 'M42', inputEl: accelInputEl, buttonEl: setAccelBtn, appliedValue: '' },
+  { command: 'M43', inputEl: gainInputEl, buttonEl: setGainBtn, appliedValue: '' }
+].filter(binding => binding.inputEl && binding.buttonEl);
+
+const configBindingByCommand = Object.fromEntries(configSetBindings.map(binding => [binding.command, binding]));
+
 const seriesState = {
   version: 1,
   seriesId: null,
@@ -122,6 +135,68 @@ function resizeCanvasToDisplaySize() {
 
 function setStatus(text) {
   statusLine.textContent = `STATUS: ${text}`;
+}
+
+function getConfigComparableValue(inputEl) {
+  if (!inputEl) {
+    return '';
+  }
+
+  if (inputEl.tagName === 'SELECT') {
+    return String(inputEl.value ?? '');
+  }
+
+  if (inputEl.type === 'number') {
+    const parsed = parseFlexibleNumber(inputEl.value);
+    if (!Number.isFinite(parsed)) {
+      return '';
+    }
+    return String(Number(parsed.toFixed(4)));
+  }
+
+  return String(inputEl.value ?? '').trim();
+}
+
+function setConfigPendingState(binding, isPending) {
+  if (!binding?.buttonEl) {
+    return;
+  }
+  binding.buttonEl.classList.toggle('pending-set', !!isPending);
+}
+
+function updateConfigPendingState(binding) {
+  if (!binding?.inputEl) {
+    return;
+  }
+  const current = getConfigComparableValue(binding.inputEl);
+  setConfigPendingState(binding, current !== binding.appliedValue);
+}
+
+function markConfigBindingApplied(binding) {
+  if (!binding?.inputEl) {
+    return;
+  }
+  binding.appliedValue = getConfigComparableValue(binding.inputEl);
+  setConfigPendingState(binding, false);
+}
+
+function markConfigAppliedByCommand(command) {
+  const binding = configBindingByCommand[command];
+  if (!binding) {
+    return;
+  }
+  markConfigBindingApplied(binding);
+}
+
+function initializeConfigPendingTracking() {
+  configSetBindings.forEach(binding => {
+    binding.appliedValue = getConfigComparableValue(binding.inputEl);
+    setConfigPendingState(binding, false);
+
+    const refreshPending = () => updateConfigPendingState(binding);
+    binding.inputEl.addEventListener('input', refreshPending);
+    binding.inputEl.addEventListener('change', refreshPending);
+  });
 }
 
 function updateGainButtonLockState() {
@@ -1167,34 +1242,42 @@ function applyMachineConfigFromParts(parts) {
 
   if (Number.isFinite(preloadN) && preloadInputEl) {
     preloadInputEl.value = preloadN.toFixed(1);
+    markConfigAppliedByCommand('M47');
   }
 
   if (Number.isFinite(alpha) && alphaInputEl && alpha > 0 && alpha <= 1) {
     alphaInputEl.value = alpha.toFixed(2);
+    markConfigAppliedByCommand('M48');
   }
 
   if (Number.isFinite(accelMmPerS2) && accelInputEl) {
     accelInputEl.value = accelMmPerS2.toFixed(1);
+    markConfigAppliedByCommand('M42');
   }
 
   if (Number.isFinite(gain) && gainInputEl) {
     gainInputEl.value = gain.toFixed(3);
+    markConfigAppliedByCommand('M43');
   }
 
   if (Number.isFinite(sampleRateHz) && sampleRateInputEl) {
     sampleRateInputEl.value = sampleRateHz.toFixed(1);
+    markConfigAppliedByCommand('M44');
   }
 
   if (autoBreakInputEl && (autoBreakEnabled === 0 || autoBreakEnabled === 1)) {
     autoBreakInputEl.value = String(autoBreakEnabled);
+    markConfigAppliedByCommand('M49');
   }
 
   if (Number.isFinite(manualSlowMmPerMin) && manualSlowInputEl) {
     manualSlowInputEl.value = manualSlowMmPerMin.toFixed(1);
+    markConfigAppliedByCommand('M45');
   }
 
   if (Number.isFinite(manualFastMmPerMin) && manualFastInputEl) {
     manualFastInputEl.value = manualFastMmPerMin.toFixed(1);
+    markConfigAppliedByCommand('M46');
   }
 
   if (Number.isFinite(slowMmPerMin) && speedInputEl) {
@@ -1292,6 +1375,8 @@ function parseLine(line) {
     if (command === 'M43' && message === 'gain_set') {
       clearGainUiUnlock();
     }
+
+    markConfigAppliedByCommand(command);
 
     if (command === 'M11') {
       const activeTest = getActiveTest();
@@ -1783,6 +1868,7 @@ window.addEventListener('beforeunload', persistStateNow);
 
 exportBtn.addEventListener('click', exportSeriesCsv);
 
+initializeConfigPendingTracking();
 clearGainUiUnlock();
 restoreStateFromStorage();
 setConnectionBadge(false);
