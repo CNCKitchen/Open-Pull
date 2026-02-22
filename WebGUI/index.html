@@ -58,6 +58,27 @@
             </select>
             <span><em>mm/min</em> <strong>Test Speed</strong></span>
           </div>
+          <div class="inline-input config-speed-row">
+            <select id="pinLastTestInput" class="input">
+              <option value="1">On</option>
+              <option value="0">Off</option>
+            </select>
+            <span><strong>Pin Last Test In Graph</strong></span>
+          </div>
+          <div class="inline-input config-speed-row">
+            <select id="yAxisModeInput" class="input">
+              <option value="force">Force (N)</option>
+              <option value="stress">Stress (MPa)</option>
+            </select>
+            <span><strong>Y Axis Mode</strong></span>
+          </div>
+          <div class="inline-input config-speed-row">
+            <select id="xAxisModeInput" class="input">
+              <option value="time">Time (s)</option>
+              <option value="displacement">Displacement (mm)</option>
+            </select>
+            <span><strong>X Axis Mode</strong></span>
+          </div>
           <div class="inline-input">
             <input id="preloadInput" class="input" type="number" step="0.1" value="2.0" />
             <button id="setPreloadBtn" class="btn mini">Set Preload N</button>

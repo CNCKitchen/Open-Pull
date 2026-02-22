@@ -429,7 +429,7 @@ select.input {
   display: grid;
   grid-template-rows: auto repeat(6, 36px);
   gap: 6px;
-  align-content: start;
+  align-content: center;
   min-height: 0;
 }
 

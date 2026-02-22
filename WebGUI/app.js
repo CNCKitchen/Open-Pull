@@ -28,6 +28,9 @@ const preloadInputEl = document.getElementById('preloadInput');
 const alphaInputEl = document.getElementById('alphaInput');
 const sampleRateInputEl = document.getElementById('sampleRateInput');
 const autoBreakInputEl = document.getElementById('autoBreakInput');
+const pinLastTestInputEl = document.getElementById('pinLastTestInput');
+const yAxisModeInputEl = document.getElementById('yAxisModeInput');
+const xAxisModeInputEl = document.getElementById('xAxisModeInput');
 const manualSlowInputEl = document.getElementById('manualSlowInput');
 const manualFastInputEl = document.getElementById('manualFastInput');
 const accelInputEl = document.getElementById('accelInput');
@@ -73,6 +76,11 @@ const LOAD_SPIKE_JUMP_THRESHOLD_N = 300;
 const MAX_SERIAL_MONITOR_LINES = 250;
 const BREAK_TAIL_SAMPLES = 2;
 const BREAK_TAIL_TIMEOUT_MS = 1000;
+const DEFAULT_CHART_PREFERENCES = {
+  pinLastTestOverlay: true,
+  yAxisMode: 'force',
+  xAxisMode: 'time'
+};
 
 let serialPort = null;
 let serialReader = null;
@@ -112,8 +120,47 @@ const seriesState = {
   tests: [],
   activeTestId: null,
   readyForStart: false,
-  overlaySelection: {}
+  overlaySelection: {},
+  chartPreferences: { ...DEFAULT_CHART_PREFERENCES }
 };
+
+function getChartPreferences() {
+  return {
+    pinLastTestOverlay: !!seriesState.chartPreferences?.pinLastTestOverlay,
+    yAxisMode: seriesState.chartPreferences?.yAxisMode === 'stress' ? 'stress' : 'force',
+    xAxisMode: seriesState.chartPreferences?.xAxisMode === 'displacement' ? 'displacement' : 'time'
+  };
+}
+
+function applyChartPreferenceControls() {
+  const prefs = getChartPreferences();
+  if (pinLastTestInputEl) {
+    pinLastTestInputEl.value = prefs.pinLastTestOverlay ? '1' : '0';
+  }
+  if (yAxisModeInputEl) {
+    yAxisModeInputEl.value = prefs.yAxisMode;
+  }
+  if (xAxisModeInputEl) {
+    xAxisModeInputEl.value = prefs.xAxisMode;
+  }
+}
+
+function getSampleXValue(test, sample, xAxisMode, xBaseline) {
+  if (xAxisMode === 'displacement') {
+    return sample.displacementMm - xBaseline;
+  }
+  return (sample.timestampMs - xBaseline) / 1000;
+}
+
+function getSampleYValue(test, sample, yAxisMode) {
+  if (yAxisMode === 'stress') {
+    const area = getAreaMm2FromMeta(test.meta);
+    if (Number.isFinite(area) && area > 0) {
+      return sample.loadN / area;
+    }
+  }
+  return sample.loadN;
+}
 
 function resizeCanvasToDisplaySize() {
   const rect = canvas.getBoundingClientRect();
@@ -329,6 +376,48 @@ function parseFlexibleNumber(rawValue) {
     .replace(/[^0-9eE+\-.]/g, '');
 
   return parseFloat(normalized);
+}
+
+function normalizeDecimalInput(inputEl) {
+  if (!inputEl) {
+    return;
+  }
+
+  const normalizeValue = () => {
+    const current = String(inputEl.value ?? '');
+    if (!current.includes(',')) {
+      return;
+    }
+    inputEl.value = current.replace(/,/g, '.');
+  };
+
+  inputEl.addEventListener('input', normalizeValue);
+  inputEl.addEventListener('change', normalizeValue);
+
+  inputEl.addEventListener('keydown', event => {
+    if (event.key !== ',') {
+      return;
+    }
+
+    event.preventDefault();
+    inputEl.value = `${inputEl.value}.`;
+    inputEl.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+}
+
+function initializeDecimalInputNormalization() {
+  [
+    widthInputEl,
+    heightInputEl,
+    diameterInputEl,
+    preloadInputEl,
+    alphaInputEl,
+    sampleRateInputEl,
+    manualSlowInputEl,
+    manualFastInputEl,
+    accelInputEl,
+    gainInputEl
+  ].forEach(normalizeDecimalInput);
 }
 
 function escapeCsv(value) {
@@ -780,20 +869,26 @@ function renderChart() {
   const plotY = marginTop;
   const plotW = width - marginLeft - marginRight;
   const plotH = height - marginTop - marginBottom;
+  const chartPreferences = getChartPreferences();
+  const xAxisMode = chartPreferences.xAxisMode;
+  const yAxisMode = chartPreferences.yAxisMode;
+  const yAxisLabel = yAxisMode === 'stress' ? 'Stress (MPa)' : 'Force (N)';
+  const xAxisLabel = xAxisMode === 'displacement' ? 'Displacement (mm)' : 'Time (s)';
 
   const seriesEntries = getVisibleChartSeries();
-  let tMax = 1;
-  let fMax = 1;
+  let xMax = 1;
+  let yMax = 1;
 
   seriesEntries.forEach(entry => {
     const samples = entry.test.samples;
-    const t0 = samples[0].timestampMs;
-    const testTMax = samples[samples.length - 1].timestampMs > t0
-      ? (samples[samples.length - 1].timestampMs - t0) / 1000
-      : 0;
-    const testFMax = samples.reduce((maxVal, sample) => (sample.loadN > maxVal ? sample.loadN : maxVal), 0);
-    if (testTMax > tMax) tMax = testTMax;
-    if (testFMax > fMax) fMax = testFMax;
+    const xBaseline = xAxisMode === 'displacement' ? samples[0].displacementMm : samples[0].timestampMs;
+
+    samples.forEach(sample => {
+      const sampleX = getSampleXValue(entry.test, sample, xAxisMode, xBaseline);
+      const sampleY = getSampleYValue(entry.test, sample, yAxisMode);
+      if (sampleX > xMax) xMax = sampleX;
+      if (sampleY > yMax) yMax = sampleY;
+    });
   });
 
   const yTicks = 6;
@@ -809,31 +904,31 @@ function renderChart() {
   for (let i = 0; i <= yTicks; i += 1) {
     const ratio = i / yTicks;
     const y = plotY + plotH - ratio * plotH;
-    const forceVal = ratio * fMax;
+    const yAxisValue = ratio * yMax;
 
     ctx.beginPath();
     ctx.moveTo(plotX, y);
     ctx.lineTo(plotX + plotW, y);
     ctx.stroke();
 
-    ctx.fillText(formatNum(forceVal, forceVal >= 100 ? 0 : 1), 6, y + 4);
+    ctx.fillText(formatNum(yAxisValue, yAxisValue >= 100 ? 0 : 1), 6, y + 4);
   }
 
   for (let i = 0; i <= xTicks; i += 1) {
     const ratio = i / xTicks;
     const x = plotX + ratio * plotW;
-    const timeVal = ratio * tMax;
+    const xAxisValue = ratio * xMax;
 
     ctx.beginPath();
     ctx.moveTo(x, plotY);
     ctx.lineTo(x, plotY + plotH);
     ctx.stroke();
 
-    ctx.fillText(formatNum(timeVal, timeVal >= 10 ? 0 : 1), x - 10, plotY + plotH + 16);
+    ctx.fillText(formatNum(xAxisValue, xAxisValue >= 10 ? 0 : 1), x - 10, plotY + plotH + 16);
   }
 
-  ctx.fillText('Force (N)', 8, plotY - 6);
-  ctx.fillText('Time (s)', plotX + plotW - 50, plotY + plotH + 32);
+  ctx.fillText(yAxisLabel, 8, plotY - 6);
+  ctx.fillText(xAxisLabel, plotX + plotW - 100, plotY + plotH + 32);
 
   if (seriesEntries.length === 0) {
     return;
@@ -841,7 +936,7 @@ function renderChart() {
 
   seriesEntries.forEach(entry => {
     const samples = entry.test.samples;
-    const t0 = samples[0].timestampMs;
+    const xBaseline = xAxisMode === 'displacement' ? samples[0].displacementMm : samples[0].timestampMs;
     const originX = plotX;
     const originY = plotY + plotH;
 
@@ -850,9 +945,10 @@ function renderChart() {
     let lastX = originX;
 
     samples.forEach(sample => {
-      const relTimeS = (sample.timestampMs - t0) / 1000;
-      const x = plotX + (tMax > 0 ? (relTimeS / tMax) * plotW : 0);
-      const y = plotY + plotH - (sample.loadN / fMax) * plotH;
+      const sampleX = getSampleXValue(entry.test, sample, xAxisMode, xBaseline);
+      const sampleY = getSampleYValue(entry.test, sample, yAxisMode);
+      const x = plotX + (xMax > 0 ? (sampleX / xMax) * plotW : 0);
+      const y = plotY + plotH - (sampleY / yMax) * plotH;
       ctx.lineTo(x, y);
       lastX = x;
     });
@@ -872,9 +968,10 @@ function renderChart() {
 
     ctx.moveTo(originX, originY);
     samples.forEach(sample => {
-      const relTimeS = (sample.timestampMs - t0) / 1000;
-      const x = plotX + (tMax > 0 ? (relTimeS / tMax) * plotW : 0);
-      const y = plotY + plotH - (sample.loadN / fMax) * plotH;
+      const sampleX = getSampleXValue(entry.test, sample, xAxisMode, xBaseline);
+      const sampleY = getSampleYValue(entry.test, sample, yAxisMode);
+      const x = plotX + (xMax > 0 ? (sampleX / xMax) * plotW : 0);
+      const y = plotY + plotH - (sampleY / yMax) * plotH;
       ctx.lineTo(x, y);
     });
 
@@ -936,6 +1033,11 @@ function restoreStateFromStorage() {
     seriesState.overlaySelection = parsed.overlaySelection && typeof parsed.overlaySelection === 'object'
       ? parsed.overlaySelection
       : {};
+    seriesState.chartPreferences = {
+      ...DEFAULT_CHART_PREFERENCES,
+      ...(parsed.chartPreferences && typeof parsed.chartPreferences === 'object' ? parsed.chartPreferences : {})
+    };
+    applyChartPreferenceControls();
 
     const activeTest = getActiveTest();
     if (activeTest && activeTest.samples.length > 0) {
@@ -1654,6 +1756,12 @@ startTestBtn.addEventListener('click', async () => {
   const test = createTestFromCurrentInputs();
   test.meta.speedMmMin = roundedSpeed;
 
+  const chartPreferences = getChartPreferences();
+  const lastFinishedTest = seriesState.tests.length > 0 ? seriesState.tests[seriesState.tests.length - 1] : null;
+  if (chartPreferences.pinLastTestOverlay && lastFinishedTest && lastFinishedTest.id !== test.id) {
+    seriesState.overlaySelection[lastFinishedTest.id] = true;
+  }
+
   seriesState.tests.push(test);
   seriesState.activeTestId = test.id;
   seriesState.readyForStart = false;
@@ -1863,14 +1971,39 @@ if (sampleCommentEl) {
   });
 }
 
+if (pinLastTestInputEl) {
+  pinLastTestInputEl.addEventListener('change', () => {
+    seriesState.chartPreferences.pinLastTestOverlay = pinLastTestInputEl.value === '1';
+    schedulePersistState();
+  });
+}
+
+if (yAxisModeInputEl) {
+  yAxisModeInputEl.addEventListener('change', () => {
+    seriesState.chartPreferences.yAxisMode = yAxisModeInputEl.value === 'stress' ? 'stress' : 'force';
+    schedulePersistState();
+    renderChart();
+  });
+}
+
+if (xAxisModeInputEl) {
+  xAxisModeInputEl.addEventListener('change', () => {
+    seriesState.chartPreferences.xAxisMode = xAxisModeInputEl.value === 'displacement' ? 'displacement' : 'time';
+    schedulePersistState();
+    renderChart();
+  });
+}
+
 window.addEventListener('resize', renderChart);
 window.addEventListener('beforeunload', persistStateNow);
 
 exportBtn.addEventListener('click', exportSeriesCsv);
 
 initializeConfigPendingTracking();
+initializeDecimalInputNormalization();
 clearGainUiUnlock();
 restoreStateFromStorage();
+applyChartPreferenceControls();
 setConnectionBadge(false);
 applyTestTypeUiState();
 renderSampleSummary();
