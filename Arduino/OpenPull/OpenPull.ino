@@ -47,7 +47,7 @@ const float gainAbsMin = 100.0f;
 const float gainAbsMax = 5000.0f;
 const unsigned long gainWriteDelayMs = 30000UL;
 const unsigned long gainWriteWindowMs = 30000UL;
-const unsigned long tareAfterBreakDelayMs = 1000UL;
+const unsigned long tareAfterBreakDelayMs = 2000UL;
 
 // Timing
 const unsigned long yMTestTimeMs = 30000UL;
@@ -304,9 +304,9 @@ void emitConfig() {
 void loop() {
   processSerial();
 
-  if (quickTareAfterBreakPending && mode == MODE_MANUAL && !delayedStartPending) {
+  if (quickTareAfterBreakPending && mode == MODE_MANUAL && !delayedStartPending && currentSpeedSps < 0.5f) {
     if ((long)(millis() - quickTareAfterBreakAtMs) >= 0) {
-      performQuickTare();
+      performTare();
       quickTareAfterBreakPending = false;
       emitStatus("AUTO", "tare_after_break_done");
     }
