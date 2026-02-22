@@ -44,7 +44,8 @@ const manualStopBtn = document.getElementById('manualStopBtn');
 const tareBtn = document.getElementById('tareBtn');
 const setZeroBtn = document.getElementById('setZeroBtn');
 const gotoZeroBtn = document.getElementById('gotoZeroBtn');
-const exportBtn = document.getElementById('exportBtn');
+const cleanExportBtn = document.getElementById('cleanExportBtn');
+const fullExportBtn = document.getElementById('fullExportBtn');
 const setPreloadBtn = document.getElementById('setPreloadBtn');
 const setAlphaBtn = document.getElementById('setAlphaBtn');
 const setSampleRateBtn = document.getElementById('setSampleRateBtn');
@@ -1654,32 +1655,229 @@ function getSeriesExportRows() {
 
     const t0 = samples[0].timestampMs;
     const thicknessMm = Number.isFinite(test.meta.thicknessMm) ? test.meta.thicknessMm : test.meta.heightMm;
+    const safeSampleName = sanitizeSpreadsheetText(test.meta.sampleName);
+    const safeComment = sanitizeSpreadsheetText(test.meta.sampleComment);
+
     samples.forEach(sample => {
       rows.push([
         seriesState.seriesId,
         test.id,
         index + 1,
         test.status,
-        escapeCsv(test.meta.sampleName),
-        escapeCsv(test.meta.sampleComment),
+        safeSampleName,
+        safeComment,
         test.meta.testType,
         Number.isFinite(test.meta.speedMmMin) ? test.meta.speedMmMin : '',
         Number.isFinite(test.meta.widthMm) ? test.meta.widthMm : '',
         Number.isFinite(thicknessMm) ? thicknessMm : '',
         Number.isFinite(test.meta.diameterMm) ? test.meta.diameterMm : '',
         sample.timestampMs,
-        formatNum((sample.timestampMs - t0) / 1000, 4),
+        Number(((sample.timestampMs - t0) / 1000).toFixed(4)),
         sample.loadN,
         sample.stepPos,
         sample.displacementMm,
         sample.stressMpa,
         sample.mode,
         sample.speedSps
-      ].join(','));
+      ]);
     });
   });
 
   return rows;
+}
+
+function sanitizeSpreadsheetText(value) {
+  const text = String(value ?? '');
+  return /^[=+\-@]/.test(text) ? `'${text}` : text;
+}
+
+function getSeriesExportHeader() {
+  return [
+    'series_id',
+    'test_id',
+    'test_index',
+    'test_status',
+    'sample_name',
+    'comment',
+    'test_type',
+    'speed_mm_per_min',
+    'width_mm',
+    'thickness_mm',
+    'diameter_mm',
+    'timestamp_ms',
+    'relative_time_s',
+    'load_N',
+    'step_position',
+    'displacement_mm',
+    'stress_MPa',
+    'mode',
+    'speed_steps_per_s'
+  ];
+}
+
+function getExportStamp() {
+  return new Date().toISOString().replace(/[:.]/g, '-');
+}
+
+function formatExportDateTime(isoText) {
+  if (!isoText) {
+    return '';
+  }
+
+  const date = new Date(isoText);
+  if (Number.isNaN(date.getTime())) {
+    return String(isoText);
+  }
+  return date.toLocaleString();
+}
+
+function roundForExport(value, decimals = 4) {
+  if (!Number.isFinite(value)) {
+    return '';
+  }
+  return Number(value.toFixed(decimals));
+}
+
+function getExportTestsWithSamples() {
+  return seriesState.tests.filter(test => Array.isArray(test.samples) && test.samples.length > 0);
+}
+
+function getConfigurationExportRows() {
+  const nowIso = new Date().toISOString();
+  const chartPreferences = getChartPreferences();
+  const currentTestType = testTypeEl?.value || '';
+  const currentGeometry = getGeometryFromInputs();
+  const activeTest = getActiveTest();
+
+  return [
+    ['key', 'value'],
+    ['exported_at_iso', nowIso],
+    ['series_id', seriesState.seriesId || ''],
+    ['total_tests_in_series', seriesState.tests.length],
+    ['tests_with_samples', getExportTestsWithSamples().length],
+    ['active_test_id', activeTest?.id || ''],
+    ['active_test_status', activeTest?.status || ''],
+    ['selected_test_type', currentTestType],
+    ['selected_speed_mm_per_min', speedInputEl?.value || ''],
+    ['selected_width_mm', Number.isFinite(currentGeometry.widthMm) ? currentGeometry.widthMm : ''],
+    ['selected_thickness_mm', Number.isFinite(currentGeometry.thicknessMm) ? currentGeometry.thicknessMm : ''],
+    ['selected_diameter_mm', Number.isFinite(currentGeometry.diameterMm) ? currentGeometry.diameterMm : ''],
+    ['pin_last_test_overlay', chartPreferences.pinLastTestOverlay ? 'On' : 'Off'],
+    ['y_axis_mode', chartPreferences.yAxisMode],
+    ['x_axis_mode', chartPreferences.xAxisMode],
+    ['preload_N', preloadInputEl?.value || ''],
+    ['filter_alpha', alphaInputEl?.value || ''],
+    ['auto_break', autoBreakInputEl?.value === '1' ? 'On' : 'Off'],
+    ['tare_after_break', tareAfterBreakInputEl?.value === '1' ? 'On' : 'Off'],
+    ['sample_rate_Hz', sampleRateInputEl?.value || ''],
+    ['manual_slow_mm_per_min', manualSlowInputEl?.value || ''],
+    ['manual_fast_mm_per_min', manualFastInputEl?.value || ''],
+    ['acceleration_mm_per_s2', accelInputEl?.value || ''],
+    ['gain', gainInputEl?.value || '']
+  ];
+}
+
+function buildConfigurationSheet() {
+  const rows = getConfigurationExportRows();
+  const worksheet = window.XLSX.utils.aoa_to_sheet(rows);
+  worksheet['!cols'] = [{ wch: 30 }, { wch: 24 }];
+  return worksheet;
+}
+
+function buildStructuredXlsxSheet(tests) {
+  const dataStartRow = 9;
+  const maxSampleCount = tests.reduce((maxValue, test) => {
+    return Math.max(maxValue, test.samples.length);
+  }, 0);
+  const rowCount = dataStartRow + maxSampleCount;
+  const colCount = tests.length * 2;
+  const matrix = Array.from({ length: rowCount }, () => Array.from({ length: colCount }, () => ''));
+  const merges = [];
+
+  tests.forEach((test, index) => {
+    const col = index * 2;
+    const valueCol = col + 1;
+    const isLoadTest = test.meta?.testType === 'load';
+    const yHeader = isLoadTest ? 'force' : 'stress';
+    const maxLabel = isLoadTest ? 'max force' : 'max stress';
+    const thicknessMm = Number.isFinite(test.meta?.thicknessMm) ? test.meta.thicknessMm : test.meta?.heightMm;
+    const areaMm2 = getAreaMm2FromMeta(test.meta);
+
+    const peakY = test.samples.reduce((highest, sample) => {
+      const value = isLoadTest
+        ? sample.loadN
+        : (Number.isFinite(sample.stressMpa) ? sample.stressMpa : getSampleYValue(test, sample, 'stress'));
+      if (!Number.isFinite(value)) {
+        return highest;
+      }
+      return value > highest ? value : highest;
+    }, 0);
+
+    matrix[0][col] = sanitizeSpreadsheetText(test.meta?.sampleName || `test_${index + 1}`);
+    matrix[1][col] = sanitizeSpreadsheetText(test.meta?.sampleComment || '');
+    matrix[2][col] = formatExportDateTime(test.startedAtIso);
+    matrix[3][col] = 'speed';
+    matrix[3][valueCol] = roundForExport(test.meta?.speedMmMin, 3);
+    matrix[4][col] = 'width';
+    matrix[4][valueCol] = roundForExport(test.meta?.widthMm, 4);
+    matrix[5][col] = test.meta?.testType === 'cylindrical' ? 'diameter' : 'thickness';
+    matrix[5][valueCol] = test.meta?.testType === 'cylindrical'
+      ? roundForExport(test.meta?.diameterMm, 4)
+      : roundForExport(thicknessMm, 4);
+    matrix[6][col] = 'area';
+    matrix[6][valueCol] = roundForExport(areaMm2, 4);
+    matrix[7][col] = maxLabel;
+    matrix[7][valueCol] = roundForExport(peakY, 4);
+    matrix[8][col] = 'displacement';
+    matrix[8][valueCol] = yHeader;
+
+    test.samples.forEach((sample, sampleIndex) => {
+      const row = dataStartRow + sampleIndex;
+      matrix[row][col] = roundForExport(sample.displacementMm, 6);
+      const yValue = isLoadTest
+        ? sample.loadN
+        : (Number.isFinite(sample.stressMpa) ? sample.stressMpa : getSampleYValue(test, sample, 'stress'));
+      matrix[row][valueCol] = roundForExport(yValue, 6);
+    });
+
+    merges.push({ s: { r: 0, c: col }, e: { r: 0, c: valueCol } });
+    merges.push({ s: { r: 1, c: col }, e: { r: 1, c: valueCol } });
+    merges.push({ s: { r: 2, c: col }, e: { r: 2, c: valueCol } });
+  });
+
+  const worksheet = window.XLSX.utils.aoa_to_sheet(matrix);
+  worksheet['!merges'] = merges;
+  worksheet['!cols'] = Array.from({ length: colCount }, (_, colIndex) => ({
+    wch: colIndex % 2 === 0 ? 15 : 12
+  }));
+  return worksheet;
+}
+
+function downloadBlob(blob, filename) {
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = filename;
+  link.click();
+  URL.revokeObjectURL(url);
+}
+
+function isXlsxLibraryAvailable() {
+  if (window.XLSX) {
+    return true;
+  }
+  setStatus('xlsx_library_not_loaded');
+  return false;
+}
+
+function downloadWorkbook(workbook, suffix = 'export') {
+  const workbookBytes = window.XLSX.write(workbook, { bookType: 'xlsx', type: 'array' });
+  const blob = new Blob(
+    [workbookBytes],
+    { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }
+  );
+  const stamp = getExportStamp();
+  downloadBlob(blob, `${seriesState.seriesId}_${suffix}_${stamp}.xlsx`);
 }
 
 function exportSeriesCsv() {
@@ -1694,40 +1892,68 @@ function exportSeriesCsv() {
     return;
   }
 
-  const header = [
-    'series_id',
-    'test_id',
-    'test_index',
-    'test_status',
-    'sample_name',
-    'comment',
-    'test_type',
-    'speed_mm_per_min',
-    'width_mm',
-      'thickness_mm',
-    'diameter_mm',
-    'timestamp_ms',
-    'relative_time_s',
-    'load_N',
-    'step_position',
-    'displacement_mm',
-    'stress_MPa',
-    'mode',
-    'speed_steps_per_s'
-  ].join(',');
+  const header = getSeriesExportHeader();
+  const csvRows = [
+    header.join(','),
+    ...rows.map(row => row.map(escapeCsv).join(','))
+  ];
 
-  const csv = [header, ...rows].join('\n');
+  const csv = csvRows.join('\n');
   const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement('a');
-
-  const stamp = new Date().toISOString().replace(/[:.]/g, '-');
-  link.href = url;
-  link.download = `${seriesState.seriesId}_${stamp}.csv`;
-  link.click();
-
-  URL.revokeObjectURL(url);
+  const stamp = getExportStamp();
+  downloadBlob(blob, `${seriesState.seriesId}_${stamp}.csv`);
   setStatus('series_csv_exported');
+}
+
+function exportSeriesCleanXlsx() {
+  if (!seriesState.seriesId) {
+    setStatus('create_series_first');
+    return;
+  }
+
+  const tests = getExportTestsWithSamples();
+  if (tests.length === 0) {
+    setStatus('no_data_to_export');
+    return;
+  }
+
+  if (!isXlsxLibraryAvailable()) {
+    return;
+  }
+
+  const workbook = window.XLSX.utils.book_new();
+  const cleanWorksheet = buildStructuredXlsxSheet(tests);
+  const configWorksheet = buildConfigurationSheet();
+  window.XLSX.utils.book_append_sheet(workbook, cleanWorksheet, 'Clean Export');
+  window.XLSX.utils.book_append_sheet(workbook, configWorksheet, 'Configuration');
+  downloadWorkbook(workbook, 'clean');
+  setStatus('series_clean_xlsx_exported');
+}
+
+function exportSeriesFullXlsx() {
+  if (!seriesState.seriesId) {
+    setStatus('create_series_first');
+    return;
+  }
+
+  const rows = getSeriesExportRows();
+  if (rows.length === 0) {
+    setStatus('no_data_to_export');
+    return;
+  }
+
+  if (!isXlsxLibraryAvailable()) {
+    return;
+  }
+
+  const header = getSeriesExportHeader();
+  const fullWorksheet = window.XLSX.utils.aoa_to_sheet([header, ...rows]);
+  const configWorksheet = buildConfigurationSheet();
+  const workbook = window.XLSX.utils.book_new();
+  window.XLSX.utils.book_append_sheet(workbook, fullWorksheet, 'Full Export');
+  window.XLSX.utils.book_append_sheet(workbook, configWorksheet, 'Configuration');
+  downloadWorkbook(workbook, 'full');
+  setStatus('series_full_xlsx_exported');
 }
 
 connectBtn.addEventListener('click', async () => {
@@ -2013,7 +2239,13 @@ if (xAxisModeInputEl) {
 window.addEventListener('resize', renderChart);
 window.addEventListener('beforeunload', persistStateNow);
 
-exportBtn.addEventListener('click', exportSeriesCsv);
+if (cleanExportBtn) {
+  cleanExportBtn.addEventListener('click', exportSeriesCleanXlsx);
+}
+
+if (fullExportBtn) {
+  fullExportBtn.addEventListener('click', exportSeriesFullXlsx);
+}
 
 initializeConfigPendingTracking();
 initializeDecimalInputNormalization();
