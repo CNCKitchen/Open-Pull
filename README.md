@@ -2,6 +2,8 @@
 
 DIY universal testing machine files (mechanics, electronics, firmware, and browser control UI).
 
+![Open-Pull Web GUI](gui.png)
+
 Watch the project video: https://youtu.be/uvn-J8CbtzM
 
 Support: [Patreon](https://www.patreon.com/cnckitchen) · [PayPal](https://www.paypal.me/CNCKitchen)
@@ -126,15 +128,19 @@ GUI location: `WebGUI/index.html`
 
 - Web Serial connect/disconnect.
 - Guided workflow: create series → prepare sample → start test.
+- Clean status row with color-coded state indicator (e.g. ready, pretension, moving to zero, testing, break detected, test stopped) and detailed status text.
 - Live chart with selectable axes:
 	- X: time or displacement
 	- Y: force or stress
-- Per-test metadata (name/comment/type/geometry).
-- Overlay previous tests in the same series.
+- Per-test metadata (name/material/comment/type/geometry).
+- Performed-tests table with sortable columns: ID, name, type, material, comment, max load, max stress, sample points.
+- Per-test delete action in the series list.
+- Overlay management via per-test checkboxes + master checkbox (all eligible tests on/off).
+- Duplicate-name warning when preparing a new sample.
 - Manual jog buttons (`±0.1`, `±1`, `±10 mm`).
 - Tare, zero, goto-zero, stop, and emergency stop.
 - Firmware config controls (preload, alpha, sample rate, manual speeds, accel, gain unlock/set, break options).
-- Export to XLSX (clean + full variants).
+- Export to XLSX (clean, selected, and full variants), each with configuration and summary data.
 - Local persistence of series state in browser `localStorage`.
 
 ### Browser requirements
@@ -152,21 +158,29 @@ GUI location: `WebGUI/index.html`
 5. Set speed/config as needed.
 6. Click **START TEST**.
 7. Stop with **Stop Test** (`M11`) or **EMERGENCY STOP** (`M15`) if required.
-8. Export results with **Clean Export (.xlsx)** or **Full Export (.xlsx)**.
+8. Export results with **Clean Export (.xlsx)**, **Selected Export (.xlsx)**, or **Full Export (.xlsx)**.
 
 ## Data Export
 
-WebGUI provides two spreadsheet exports:
+WebGUI provides three spreadsheet exports:
 
 - **Clean Export (.xlsx)**
 	- Organized two-column blocks per test (displacement vs stress/force)
-	- Includes a `Configuration` sheet
+	- Uses the current series-list sort order
+	- Includes `Summary` and `Configuration` sheets
 	- Intended for quick plotting and reporting
+
+- **Selected Export (.xlsx)**
+	- Same layout as clean export, but only for tests selected in the series list checkbox column
+	- Uses the current series-list sort order
+	- Includes `Summary` and `Configuration` sheets
 
 - **Full Export (.xlsx)**
 	- Flat table with full per-sample rows
 	- Includes timestamps, load, displacement, mode, speed, and metadata
-	- Includes a `Configuration` sheet
+	- Includes `Summary` and `Configuration` sheets
+
+The `Summary` sheet mirrors the performed-tests overview (ID, name, type, material, comment, max load, max stress, sample points).
 
 `Documents/DataAnalysis.xlsx` can be used for additional analysis workflows.
 
