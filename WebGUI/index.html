@@ -167,8 +167,24 @@
         <span class="series-id" id="seriesIdLabel">No active series</span>
       </div>
       <button id="newSeriesBtn" class="btn full new-series-in-list">New Series</button>
-      <div id="seriesEmpty" class="series-empty">No tests recorded yet.</div>
-      <div id="seriesList" class="series-list"></div>
+      <div class="series-table-wrap">
+        <div class="series-table-head" id="seriesTableHead">
+          <div class="series-head-cell series-head-select">
+            <input id="overlayMasterToggle" type="checkbox" title="Toggle all eligible overlays" aria-label="Toggle all eligible overlays" />
+          </div>
+          <button type="button" class="series-sort-btn" data-sort-key="seriesNumber" data-label="ID">ID</button>
+          <button type="button" class="series-sort-btn" data-sort-key="sampleName" data-label="Name">Name</button>
+          <button type="button" class="series-sort-btn" data-sort-key="testType" data-label="Type">Type</button>
+          <button type="button" class="series-sort-btn" data-sort-key="sampleMaterial" data-label="Material">Material</button>
+          <button type="button" class="series-sort-btn" data-sort-key="sampleComment" data-label="Comment">Comment</button>
+          <button type="button" class="series-sort-btn" data-sort-key="maxLoad" data-label="Max Load">Max Load</button>
+          <button type="button" class="series-sort-btn" data-sort-key="maxStress" data-label="Max Stress">Max Stress</button>
+          <button type="button" class="series-sort-btn" data-sort-key="samplePoints" data-label="Sample Points">Sample Points</button>
+          <div class="series-head-cell series-head-actions">Action</div>
+        </div>
+        <div id="seriesEmpty" class="series-empty">No tests recorded yet.</div>
+        <div id="seriesList" class="series-list"></div>
+      </div>
     </section>
   </div>
 

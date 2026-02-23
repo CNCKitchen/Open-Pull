@@ -68,6 +68,8 @@ const jogMinus10Btn = document.getElementById('jogMinus10Btn');
 const seriesIdLabelEl = document.getElementById('seriesIdLabel');
 const seriesEmptyEl = document.getElementById('seriesEmpty');
 const seriesListEl = document.getElementById('seriesList');
+const overlayMasterToggleEl = document.getElementById('overlayMasterToggle');
+const seriesSortButtons = Array.from(document.querySelectorAll('.series-sort-btn'));
 
 const canvas = document.getElementById('chartCanvas');
 const ctx = canvas.getContext('2d');
@@ -123,11 +125,16 @@ const seriesState = {
   version: 1,
   seriesId: null,
   createdAtIso: null,
+  nextSeriesTestNumber: 1,
   tests: [],
   activeTestId: null,
   readyForStart: false,
   overlaySelection: {},
-  chartPreferences: { ...DEFAULT_CHART_PREFERENCES }
+  chartPreferences: { ...DEFAULT_CHART_PREFERENCES },
+  listSort: {
+    key: 'seriesNumber',
+    direction: 'asc'
+  }
 };
 
 function getChartPreferences() {
@@ -1041,16 +1048,49 @@ function restoreStateFromStorage() {
     seriesState.tests = parsed.tests.map(test => {
       const meta = test?.meta && typeof test.meta === 'object' ? test.meta : {};
       const thicknessMm = Number.isFinite(meta.thicknessMm) ? meta.thicknessMm : meta.heightMm;
+      const sampleMaterial = typeof meta.sampleMaterial === 'string' ? meta.sampleMaterial : '';
+      const sampleComment = typeof meta.sampleComment === 'string' ? meta.sampleComment : '';
+      const samples = Array.isArray(test?.samples) ? test.samples : [];
+      const seriesNumber = Number.isFinite(test?.seriesNumber) && test.seriesNumber > 0
+        ? Math.floor(test.seriesNumber)
+        : null;
 
       return {
         ...test,
+        samples,
+        seriesNumber,
         meta: {
           ...meta,
+          sampleMaterial,
+          sampleComment,
           thicknessMm
         },
         status: normalizeTestStatus(test?.status)
       };
     });
+
+    let fallbackSeriesNumber = 1;
+    seriesState.tests.forEach(test => {
+      if (Number.isFinite(test.seriesNumber) && test.seriesNumber > 0) {
+        if (test.seriesNumber >= fallbackSeriesNumber) {
+          fallbackSeriesNumber = test.seriesNumber + 1;
+        }
+        return;
+      }
+      test.seriesNumber = fallbackSeriesNumber;
+      fallbackSeriesNumber += 1;
+    });
+
+    const maxSeriesNumber = seriesState.tests.reduce((highest, test) => {
+      if (!Number.isFinite(test.seriesNumber) || test.seriesNumber <= 0) {
+        return highest;
+      }
+      return test.seriesNumber > highest ? test.seriesNumber : highest;
+    }, 0);
+    seriesState.nextSeriesTestNumber = Number.isFinite(parsed.nextSeriesTestNumber) && parsed.nextSeriesTestNumber > maxSeriesNumber
+      ? Math.floor(parsed.nextSeriesTestNumber)
+      : maxSeriesNumber + 1;
+
     seriesState.activeTestId = typeof parsed.activeTestId === 'string' ? parsed.activeTestId : null;
     seriesState.readyForStart = !!parsed.readyForStart;
     seriesState.overlaySelection = parsed.overlaySelection && typeof parsed.overlaySelection === 'object'
@@ -1059,6 +1099,14 @@ function restoreStateFromStorage() {
     seriesState.chartPreferences = {
       ...DEFAULT_CHART_PREFERENCES,
       ...(parsed.chartPreferences && typeof parsed.chartPreferences === 'object' ? parsed.chartPreferences : {})
+    };
+    const parsedSort = parsed.listSort && typeof parsed.listSort === 'object' ? parsed.listSort : {};
+    const parsedSortKey = String(parsedSort.key || '').trim();
+    const parsedSortDirection = parsedSort.direction === 'desc' ? 'desc' : 'asc';
+    const allowedSortKeys = new Set(['seriesNumber', 'sampleName', 'testType', 'sampleMaterial', 'sampleComment', 'maxLoad', 'maxStress', 'samplePoints']);
+    seriesState.listSort = {
+      key: allowedSortKeys.has(parsedSortKey) ? parsedSortKey : 'seriesNumber',
+      direction: parsedSortDirection
     };
     applyChartPreferenceControls();
 
@@ -1119,6 +1167,186 @@ function getTestStatusClass(status) {
   return 'finished';
 }
 
+function getSeriesSortState() {
+  const key = String(seriesState.listSort?.key || '').trim();
+  const direction = seriesState.listSort?.direction === 'desc' ? 'desc' : 'asc';
+  const allowedSortKeys = new Set(['seriesNumber', 'sampleName', 'testType', 'sampleMaterial', 'sampleComment', 'maxLoad', 'maxStress', 'samplePoints']);
+  return {
+    key: allowedSortKeys.has(key) ? key : 'seriesNumber',
+    direction
+  };
+}
+
+function getSeriesNumber(test, fallbackIndex = 0) {
+  if (Number.isFinite(test?.seriesNumber) && test.seriesNumber > 0) {
+    return Math.floor(test.seriesNumber);
+  }
+  return fallbackIndex + 1;
+}
+
+function getTestMaxLoad(test) {
+  if (!test || !Array.isArray(test.samples) || test.samples.length === 0) {
+    return 0;
+  }
+  return test.samples.reduce((highest, sample) => {
+    return sample.loadN > highest ? sample.loadN : highest;
+  }, 0);
+}
+
+function getTestMaxStress(test) {
+  if (!test || test.meta?.testType === 'load') {
+    return null;
+  }
+
+  const area = getAreaMm2FromMeta(test.meta);
+  if (!Number.isFinite(area) || area <= 0 || !Array.isArray(test.samples) || test.samples.length === 0) {
+    return null;
+  }
+
+  return test.samples.reduce((highest, sample) => {
+    const stress = sample.loadN / area;
+    if (!Number.isFinite(stress)) {
+      return highest;
+    }
+    return stress > highest ? stress : highest;
+  }, 0);
+}
+
+function getSortValueForTest(test, sortKey, fallbackIndex) {
+  if (sortKey === 'seriesNumber') {
+    return getSeriesNumber(test, fallbackIndex);
+  }
+  if (sortKey === 'sampleName') {
+    return String(test?.meta?.sampleName || '').trim().toLocaleLowerCase();
+  }
+  if (sortKey === 'testType') {
+    return String(test?.meta?.testType || '').trim().toLocaleLowerCase();
+  }
+  if (sortKey === 'sampleMaterial') {
+    return String(test?.meta?.sampleMaterial || '').trim().toLocaleLowerCase();
+  }
+  if (sortKey === 'sampleComment') {
+    return String(test?.meta?.sampleComment || '').trim().toLocaleLowerCase();
+  }
+  if (sortKey === 'maxLoad') {
+    return getTestMaxLoad(test);
+  }
+  if (sortKey === 'maxStress') {
+    return getTestMaxStress(test);
+  }
+  if (sortKey === 'samplePoints') {
+    return Array.isArray(test?.samples) ? test.samples.length : 0;
+  }
+  return getSeriesNumber(test, fallbackIndex);
+}
+
+function isTestOverlayEligible(test) {
+  if (!test || !test.id) {
+    return false;
+  }
+  return test.id !== seriesState.activeTestId && Array.isArray(test.samples) && test.samples.length > 1;
+}
+
+function getSortedSeriesTests() {
+  const { key: sortKey, direction } = getSeriesSortState();
+  const testsWithIndex = seriesState.tests.map((test, index) => ({ test, index }));
+
+  testsWithIndex.sort((left, right) => {
+    const leftValue = getSortValueForTest(left.test, sortKey, left.index);
+    const rightValue = getSortValueForTest(right.test, sortKey, right.index);
+
+    const leftMissing = leftValue === null || leftValue === undefined || leftValue === '';
+    const rightMissing = rightValue === null || rightValue === undefined || rightValue === '';
+    if (leftMissing && !rightMissing) return 1;
+    if (!leftMissing && rightMissing) return -1;
+
+    let baseCompare = 0;
+    if (typeof leftValue === 'number' && typeof rightValue === 'number') {
+      baseCompare = leftValue - rightValue;
+    } else {
+      baseCompare = String(leftValue).localeCompare(String(rightValue), undefined, { sensitivity: 'base' });
+    }
+
+    if (baseCompare === 0) {
+      const leftId = getSeriesNumber(left.test, left.index);
+      const rightId = getSeriesNumber(right.test, right.index);
+      baseCompare = leftId - rightId;
+    }
+
+    return direction === 'desc' ? -baseCompare : baseCompare;
+  });
+
+  return testsWithIndex.map(entry => entry.test);
+}
+
+function updateSeriesSortHeader() {
+  if (!seriesSortButtons.length) {
+    return;
+  }
+
+  const { key: activeKey, direction } = getSeriesSortState();
+  seriesSortButtons.forEach(button => {
+    const key = button.dataset.sortKey;
+    const baseLabel = button.dataset.label || button.textContent;
+    if (key === activeKey) {
+      button.setAttribute('aria-sort', direction === 'asc' ? 'ascending' : 'descending');
+      button.textContent = `${baseLabel} ${direction === 'asc' ? '▲' : '▼'}`;
+    } else {
+      button.setAttribute('aria-sort', 'none');
+      button.textContent = baseLabel;
+    }
+  });
+}
+
+function setSeriesSort(sortKey) {
+  const currentSort = getSeriesSortState();
+  if (currentSort.key === sortKey) {
+    seriesState.listSort.direction = currentSort.direction === 'asc' ? 'desc' : 'asc';
+  } else {
+    seriesState.listSort.key = sortKey;
+    seriesState.listSort.direction = 'asc';
+  }
+
+  updateSeriesSortHeader();
+  schedulePersistState();
+  renderSeriesList();
+}
+
+function toggleAllOverlaySelections(enabled) {
+  const desiredState = !!enabled;
+  seriesState.tests.forEach(test => {
+    if (!isTestOverlayEligible(test)) {
+      return;
+    }
+    seriesState.overlaySelection[test.id] = desiredState;
+  });
+  schedulePersistState();
+  renderSeriesList();
+  renderChart();
+}
+
+function updateOverlayMasterState() {
+  if (!overlayMasterToggleEl) {
+    return;
+  }
+
+  const eligibleTests = seriesState.tests.filter(isTestOverlayEligible);
+  if (eligibleTests.length === 0) {
+    overlayMasterToggleEl.checked = false;
+    overlayMasterToggleEl.indeterminate = false;
+    overlayMasterToggleEl.disabled = true;
+    return;
+  }
+
+  overlayMasterToggleEl.disabled = false;
+  const selectedCount = eligibleTests.reduce((count, test) => {
+    return count + (seriesState.overlaySelection[test.id] ? 1 : 0);
+  }, 0);
+
+  overlayMasterToggleEl.checked = selectedCount === eligibleTests.length;
+  overlayMasterToggleEl.indeterminate = selectedCount > 0 && selectedCount < eligibleTests.length;
+}
+
 function isDuplicateSampleNameInSeries(sampleName) {
   const normalizedName = String(sampleName || '').trim().toLocaleLowerCase();
   if (!normalizedName) {
@@ -1143,7 +1371,8 @@ function deleteTestById(testId) {
     return;
   }
 
-  const testName = (test.meta?.sampleName || '').trim() || `Test ${index + 1}`;
+  const testNumber = getSeriesNumber(test, index);
+  const testName = (test.meta?.sampleName || '').trim() || `Test ${testNumber}`;
   const confirmed = window.confirm(`Delete "${testName}" from this series? This cannot be undone.`);
   if (!confirmed) {
     setStatus('delete_test_cancelled');
@@ -1166,57 +1395,81 @@ function deleteTestById(testId) {
 
 function renderSeriesList() {
   seriesListEl.innerHTML = '';
+  updateSeriesSortHeader();
 
   if (!seriesState.seriesId) {
     seriesEmptyEl.textContent = 'Create a series to begin recording tests.';
     seriesEmptyEl.style.display = 'block';
+    updateOverlayMasterState();
     return;
   }
 
   if (seriesState.tests.length === 0) {
     seriesEmptyEl.textContent = 'No tests recorded yet.';
     seriesEmptyEl.style.display = 'block';
+    updateOverlayMasterState();
     return;
   }
 
   seriesEmptyEl.style.display = 'none';
 
-  const totalTests = seriesState.tests.length;
-  const testsNewestFirst = [...seriesState.tests].reverse();
+  const sortedTests = getSortedSeriesTests();
 
-  testsNewestFirst.forEach((test, reverseIdx) => {
-    const originalIdx = totalTests - 1 - reverseIdx;
+  sortedTests.forEach((test, sortedIndex) => {
+    const seriesNumber = getSeriesNumber(test, sortedIndex);
+    const maxLoad = getTestMaxLoad(test);
+    const maxStress = getTestMaxStress(test);
+    const samplePoints = Array.isArray(test.samples) ? test.samples.length : 0;
+    const isOverlayEligible = isTestOverlayEligible(test);
+
     const row = document.createElement('div');
     row.className = 'series-row';
 
     const checkbox = document.createElement('input');
     checkbox.type = 'checkbox';
-    checkbox.checked = !!seriesState.overlaySelection[test.id];
-    checkbox.disabled = test.id === seriesState.activeTestId || test.samples.length < 2;
+    checkbox.checked = isOverlayEligible && !!seriesState.overlaySelection[test.id];
+    checkbox.disabled = !isOverlayEligible;
     checkbox.addEventListener('change', () => {
+      if (!isTestOverlayEligible(test)) {
+        return;
+      }
       seriesState.overlaySelection[test.id] = checkbox.checked;
       schedulePersistState();
+      updateOverlayMasterState();
       renderChart();
     });
 
-    const rowMain = document.createElement('div');
-    rowMain.className = 'series-row-main';
+    const idCell = document.createElement('div');
+    idCell.className = 'series-cell series-cell-id';
+    idCell.textContent = String(seriesNumber);
 
-    const title = document.createElement('div');
-    title.className = 'series-row-title';
-    title.textContent = `${originalIdx + 1}. ${getTestDisplayLabel(test, originalIdx)}`;
+    const nameCell = document.createElement('div');
+    nameCell.className = 'series-cell';
+    nameCell.textContent = (test.meta?.sampleName || '').trim() || '-';
 
-    const sub = document.createElement('div');
-    sub.className = 'series-row-sub';
-    const maxLoad = test.samples.reduce((highest, sample) => (sample.loadN > highest ? sample.loadN : highest), 0);
-    sub.textContent = `${test.meta.testType} | points: ${test.samples.length} | max: ${formatNum(maxLoad, 0)} N`;
+    const typeCell = document.createElement('div');
+    typeCell.className = 'series-cell';
+    typeCell.textContent = (test.meta?.testType || '').trim() || '-';
 
-    rowMain.appendChild(title);
-    rowMain.appendChild(sub);
+    const materialCell = document.createElement('div');
+    materialCell.className = 'series-cell';
+    materialCell.textContent = (test.meta?.sampleMaterial || '').trim() || '-';
 
-    const badge = document.createElement('span');
-    badge.className = `series-badge ${getTestStatusClass(test.status)}`;
-    badge.textContent = getStatusLabel(test.status);
+    const commentCell = document.createElement('div');
+    commentCell.className = 'series-cell';
+    commentCell.textContent = (test.meta?.sampleComment || '').trim() || '-';
+
+    const maxLoadCell = document.createElement('div');
+    maxLoadCell.className = 'series-cell series-cell-number';
+    maxLoadCell.textContent = `${formatNum(maxLoad, 0)} N`;
+
+    const maxStressCell = document.createElement('div');
+    maxStressCell.className = 'series-cell series-cell-number';
+    maxStressCell.textContent = Number.isFinite(maxStress) ? `${formatNum(maxStress, 1)} MPa` : '-';
+
+    const samplePointsCell = document.createElement('div');
+    samplePointsCell.className = 'series-cell series-cell-number';
+    samplePointsCell.textContent = String(samplePoints);
 
     const deleteBtn = document.createElement('button');
     deleteBtn.className = 'btn mini series-delete-btn';
@@ -1229,12 +1482,20 @@ function renderSeriesList() {
     });
 
     row.appendChild(checkbox);
-    row.appendChild(rowMain);
-    row.appendChild(badge);
+    row.appendChild(idCell);
+    row.appendChild(nameCell);
+    row.appendChild(typeCell);
+    row.appendChild(materialCell);
+    row.appendChild(commentCell);
+    row.appendChild(maxLoadCell);
+    row.appendChild(maxStressCell);
+    row.appendChild(samplePointsCell);
     row.appendChild(deleteBtn);
 
     seriesListEl.appendChild(row);
   });
+
+  updateOverlayMasterState();
 }
 
 function refreshUi() {
@@ -1262,9 +1523,14 @@ function beginNewSeries() {
   seriesState.seriesId = `series-${new Date().toISOString().replace(/[:.]/g, '-')}`;
   seriesState.createdAtIso = new Date().toISOString();
   seriesState.tests = [];
+  seriesState.nextSeriesTestNumber = 1;
   seriesState.activeTestId = null;
   seriesState.readyForStart = false;
   seriesState.overlaySelection = {};
+  seriesState.listSort = {
+    key: 'seriesNumber',
+    direction: 'asc'
+  };
   lastIncomingMode = MANUAL_MODE_VALUE;
 
   resetSampleDraftInputs();
@@ -1309,9 +1575,12 @@ function createTestFromCurrentInputs() {
   const sampleMaterial = (sampleMaterialEl.value || '').trim();
   const sampleComment = (sampleCommentEl.value || '').trim();
   const geometry = getGeometryFromInputs();
+  const seriesNumber = seriesState.nextSeriesTestNumber;
+  seriesState.nextSeriesTestNumber += 1;
 
   return {
     id: makeId('test'),
+    seriesNumber,
     startedAtIso: new Date().toISOString(),
     finishedAtIso: null,
     status: 'running',
@@ -2331,10 +2600,32 @@ if (fullExportBtn) {
   fullExportBtn.addEventListener('click', exportSeriesFullXlsx);
 }
 
+if (overlayMasterToggleEl) {
+  overlayMasterToggleEl.addEventListener('change', () => {
+    toggleAllOverlaySelections(overlayMasterToggleEl.checked);
+  });
+}
+
+if (seriesSortButtons.length > 0) {
+  seriesSortButtons.forEach(button => {
+    const sortKey = button.dataset.sortKey;
+    if (!sortKey) {
+      return;
+    }
+    if (!button.dataset.label) {
+      button.dataset.label = button.textContent.trim();
+    }
+    button.addEventListener('click', () => {
+      setSeriesSort(sortKey);
+    });
+  });
+}
+
 initializeConfigPendingTracking();
 initializeDecimalInputNormalization();
 clearGainUiUnlock();
 restoreStateFromStorage();
+updateSeriesSortHeader();
 applyChartPreferenceControls();
 setConnectionBadge(false);
 applyTestTypeUiState();
