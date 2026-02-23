@@ -47,6 +47,7 @@ const tareBtn = document.getElementById('tareBtn');
 const setZeroBtn = document.getElementById('setZeroBtn');
 const gotoZeroBtn = document.getElementById('gotoZeroBtn');
 const cleanExportBtn = document.getElementById('cleanExportBtn');
+const selectedExportBtn = document.getElementById('selectedExportBtn');
 const fullExportBtn = document.getElementById('fullExportBtn');
 const setPreloadBtn = document.getElementById('setPreloadBtn');
 const setAlphaBtn = document.getElementById('setAlphaBtn');
@@ -1618,6 +1619,10 @@ function markActiveTestFinished(reason) {
   activeTest.status = mapCompletionReasonToStatus(reason);
   activeTest.finishedAtIso = new Date().toISOString();
   activeTest.completionReason = reason;
+  if (Array.isArray(activeTest.samples) && activeTest.samples.length > 1) {
+    seriesState.overlaySelection[activeTest.id] = true;
+  }
+  seriesState.activeTestId = null;
   seriesState.readyForStart = false;
   schedulePersistState();
   refreshUi();
@@ -2092,6 +2097,19 @@ function getExportTestsWithSamples() {
   return seriesState.tests.filter(test => Array.isArray(test.samples) && test.samples.length > 0);
 }
 
+function getOrderedExportTestsWithSamples() {
+  return getSortedSeriesTests().filter(test => Array.isArray(test.samples) && test.samples.length > 0);
+}
+
+function getSelectedOrderedExportTestsWithSamples() {
+  return getSortedSeriesTests().filter(test => {
+    if (!Array.isArray(test.samples) || test.samples.length === 0) {
+      return false;
+    }
+    return !!seriesState.overlaySelection[test.id];
+  });
+}
+
 function getConfigurationExportRows() {
   const nowIso = new Date().toISOString();
   const chartPreferences = getChartPreferences();
@@ -2264,7 +2282,7 @@ function exportSeriesCleanXlsx() {
     return;
   }
 
-  const tests = getExportTestsWithSamples();
+  const tests = getOrderedExportTestsWithSamples();
   if (tests.length === 0) {
     setStatus('no_data_to_export');
     return;
@@ -2281,6 +2299,31 @@ function exportSeriesCleanXlsx() {
   window.XLSX.utils.book_append_sheet(workbook, configWorksheet, 'Configuration');
   downloadWorkbook(workbook, 'clean');
   setStatus('series_clean_xlsx_exported');
+}
+
+function exportSeriesSelectedCleanXlsx() {
+  if (!seriesState.seriesId) {
+    setStatus('create_series_first');
+    return;
+  }
+
+  const tests = getSelectedOrderedExportTestsWithSamples();
+  if (tests.length === 0) {
+    setStatus('no_selected_tests_to_export');
+    return;
+  }
+
+  if (!isXlsxLibraryAvailable()) {
+    return;
+  }
+
+  const workbook = window.XLSX.utils.book_new();
+  const cleanWorksheet = buildStructuredXlsxSheet(tests);
+  const configWorksheet = buildConfigurationSheet();
+  window.XLSX.utils.book_append_sheet(workbook, cleanWorksheet, 'Clean Export');
+  window.XLSX.utils.book_append_sheet(workbook, configWorksheet, 'Configuration');
+  downloadWorkbook(workbook, 'selected');
+  setStatus('series_selected_xlsx_exported');
 }
 
 function exportSeriesFullXlsx() {
@@ -2594,6 +2637,10 @@ window.addEventListener('beforeunload', persistStateNow);
 
 if (cleanExportBtn) {
   cleanExportBtn.addEventListener('click', exportSeriesCleanXlsx);
+}
+
+if (selectedExportBtn) {
+  selectedExportBtn.addEventListener('click', exportSeriesSelectedCleanXlsx);
 }
 
 if (fullExportBtn) {
