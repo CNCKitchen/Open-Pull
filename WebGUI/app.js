@@ -17,11 +17,13 @@ const heightInputEl = document.getElementById('heightInput');
 const diameterInputEl = document.getElementById('diameterInput');
 const stressCardEl = document.getElementById('stressCard');
 const sampleNameEl = document.getElementById('sampleName');
+const sampleMaterialEl = document.getElementById('sampleMaterial');
 const sampleCommentEl = document.getElementById('sampleComment');
 const sampleModalEl = document.getElementById('sampleModal');
 const sampleModalCancelBtn = document.getElementById('sampleModalCancelBtn');
 const sampleModalSaveBtn = document.getElementById('sampleModalSaveBtn');
 const sampleSummaryNameEl = document.getElementById('sampleSummaryName');
+const sampleSummaryMaterialEl = document.getElementById('sampleSummaryMaterial');
 const sampleSummaryTypeEl = document.getElementById('sampleSummaryType');
 const sampleSummaryGeometryEl = document.getElementById('sampleSummaryGeometry');
 const preloadInputEl = document.getElementById('preloadInput');
@@ -578,6 +580,7 @@ function clearGeometryFieldsForNextTest() {
 
 function resetSampleDraftInputs() {
   sampleNameEl.value = '';
+  sampleMaterialEl.value = '';
   sampleCommentEl.value = '';
   clearGeometryFieldsForNextTest();
 }
@@ -602,18 +605,20 @@ function formatSummaryNumber(value) {
 }
 
 function renderSampleSummary() {
-  if (!sampleSummaryNameEl || !sampleSummaryTypeEl || !sampleSummaryGeometryEl) {
+  if (!sampleSummaryNameEl || !sampleSummaryMaterialEl || !sampleSummaryTypeEl || !sampleSummaryGeometryEl) {
     return;
   }
 
   const meta = getGeometryFromInputs();
   const sampleName = (sampleNameEl.value || '').trim();
+  const sampleMaterial = (sampleMaterialEl.value || '').trim();
   const sampleTypeLabel =
     meta.testType === 'rectangular' ? 'Rectangular' :
       meta.testType === 'cylindrical' ? 'Cylindrical' :
         meta.testType === 'load' ? 'Load Test' : '-';
 
   sampleSummaryNameEl.textContent = `Name: ${sampleName || '-'}`;
+  sampleSummaryMaterialEl.textContent = `Material: ${sampleMaterial || '-'}`;
   sampleSummaryTypeEl.textContent = `Type: ${sampleTypeLabel}`;
 
   if (meta.testType === 'load') {
@@ -686,6 +691,16 @@ function prepareNewTestFromModal() {
   if (errors.length > 0) {
     setStatus(errors[0]);
     return;
+  }
+
+  const sampleName = (sampleNameEl.value || '').trim();
+  if (isDuplicateSampleNameInSeries(sampleName)) {
+    const shouldContinue = window.confirm(`A sample named "${sampleName}" already exists in this series. Continue anyway?`);
+    if (!shouldContinue) {
+      setStatus('duplicate_sample_name_cancelled');
+      return;
+    }
+    setStatus('duplicate_sample_name_confirmed');
   }
 
   seriesState.readyForStart = true;
@@ -1104,6 +1119,51 @@ function getTestStatusClass(status) {
   return 'finished';
 }
 
+function isDuplicateSampleNameInSeries(sampleName) {
+  const normalizedName = String(sampleName || '').trim().toLocaleLowerCase();
+  if (!normalizedName) {
+    return false;
+  }
+
+  return seriesState.tests.some(test => {
+    const existingName = String(test?.meta?.sampleName || '').trim().toLocaleLowerCase();
+    return existingName && existingName === normalizedName;
+  });
+}
+
+function deleteTestById(testId) {
+  const index = seriesState.tests.findIndex(test => test.id === testId);
+  if (index < 0) {
+    return;
+  }
+
+  const test = seriesState.tests[index];
+  if (isRunningTest(test)) {
+    setStatus('cannot_delete_running_test');
+    return;
+  }
+
+  const testName = (test.meta?.sampleName || '').trim() || `Test ${index + 1}`;
+  const confirmed = window.confirm(`Delete "${testName}" from this series? This cannot be undone.`);
+  if (!confirmed) {
+    setStatus('delete_test_cancelled');
+    return;
+  }
+
+  seriesState.tests.splice(index, 1);
+  delete seriesState.overlaySelection[testId];
+
+  if (seriesState.activeTestId === testId) {
+    seriesState.activeTestId = null;
+    seriesState.readyForStart = false;
+    resetMetricsDisplay();
+  }
+
+  schedulePersistState();
+  refreshUi();
+  setStatus('test_deleted');
+}
+
 function renderSeriesList() {
   seriesListEl.innerHTML = '';
 
@@ -1158,9 +1218,20 @@ function renderSeriesList() {
     badge.className = `series-badge ${getTestStatusClass(test.status)}`;
     badge.textContent = getStatusLabel(test.status);
 
+    const deleteBtn = document.createElement('button');
+    deleteBtn.className = 'btn mini series-delete-btn';
+    deleteBtn.type = 'button';
+    deleteBtn.textContent = 'Delete';
+    deleteBtn.disabled = isRunningTest(test);
+    deleteBtn.title = isRunningTest(test) ? 'Cannot delete a running test' : 'Delete this test from the current series';
+    deleteBtn.addEventListener('click', () => {
+      deleteTestById(test.id);
+    });
+
     row.appendChild(checkbox);
     row.appendChild(rowMain);
     row.appendChild(badge);
+    row.appendChild(deleteBtn);
 
     seriesListEl.appendChild(row);
   });
@@ -1218,6 +1289,7 @@ async function beginNewTest() {
 
   seriesState.activeTestId = null;
   seriesState.readyForStart = false;
+  sampleCommentEl.value = '';
   clearGeometryFieldsForNextTest();
   applyTestTypeUiState();
   resetMetricsDisplay();
@@ -1234,6 +1306,7 @@ async function beginNewTest() {
 
 function createTestFromCurrentInputs() {
   const sampleName = (sampleNameEl.value || '').trim();
+  const sampleMaterial = (sampleMaterialEl.value || '').trim();
   const sampleComment = (sampleCommentEl.value || '').trim();
   const geometry = getGeometryFromInputs();
 
@@ -1246,6 +1319,7 @@ function createTestFromCurrentInputs() {
     completionReason: '',
     meta: {
       sampleName,
+      sampleMaterial,
       sampleComment,
       testType: geometry.testType,
       speedMmMin: geometry.speedMmMin,
@@ -1660,6 +1734,7 @@ function getSeriesExportRows() {
     const t0 = samples[0].timestampMs;
     const thicknessMm = Number.isFinite(test.meta.thicknessMm) ? test.meta.thicknessMm : test.meta.heightMm;
     const safeSampleName = sanitizeSpreadsheetText(test.meta.sampleName);
+    const safeSampleMaterial = sanitizeSpreadsheetText(test.meta.sampleMaterial);
     const safeComment = sanitizeSpreadsheetText(test.meta.sampleComment);
 
     samples.forEach(sample => {
@@ -1669,6 +1744,7 @@ function getSeriesExportRows() {
         index + 1,
         test.status,
         safeSampleName,
+        safeSampleMaterial,
         safeComment,
         test.meta.testType,
         Number.isFinite(test.meta.speedMmMin) ? test.meta.speedMmMin : '',
@@ -1702,6 +1778,7 @@ function getSeriesExportHeader() {
     'test_index',
     'test_status',
     'sample_name',
+    'material',
     'comment',
     'test_type',
     'speed_mm_per_min',
@@ -1789,7 +1866,7 @@ function buildConfigurationSheet() {
 }
 
 function buildStructuredXlsxSheet(tests) {
-  const dataStartRow = 9;
+  const dataStartRow = 10;
   const maxSampleCount = tests.reduce((maxValue, test) => {
     return Math.max(maxValue, test.samples.length);
   }, 0);
@@ -1820,21 +1897,22 @@ function buildStructuredXlsxSheet(tests) {
 
     matrix[0][col] = sanitizeSpreadsheetText(test.meta?.sampleName || `test_${index + 1}`);
     matrix[1][col] = sanitizeSpreadsheetText(test.meta?.sampleComment || '');
-    matrix[2][col] = formatExportDateTime(test.startedAtIso);
-    matrix[3][col] = 'speed';
-    matrix[3][valueCol] = roundForExport(test.meta?.speedMmMin, 3);
-    matrix[4][col] = (!isLoadTest && !isCylindricalTest) ? 'width' : '';
-    matrix[4][valueCol] = (!isLoadTest && !isCylindricalTest) ? roundForExport(test.meta?.widthMm, 4) : '';
-    matrix[5][col] = isCylindricalTest ? 'diameter' : (!isLoadTest ? 'thickness' : '');
-    matrix[5][valueCol] = isCylindricalTest
+    matrix[2][col] = sanitizeSpreadsheetText(test.meta?.sampleMaterial || '');
+    matrix[3][col] = formatExportDateTime(test.startedAtIso);
+    matrix[4][col] = 'speed';
+    matrix[4][valueCol] = roundForExport(test.meta?.speedMmMin, 3);
+    matrix[5][col] = (!isLoadTest && !isCylindricalTest) ? 'width' : '';
+    matrix[5][valueCol] = (!isLoadTest && !isCylindricalTest) ? roundForExport(test.meta?.widthMm, 4) : '';
+    matrix[6][col] = isCylindricalTest ? 'diameter' : (!isLoadTest ? 'thickness' : '');
+    matrix[6][valueCol] = isCylindricalTest
       ? roundForExport(test.meta?.diameterMm, 4)
       : (!isLoadTest ? roundForExport(thicknessMm, 4) : '');
-    matrix[6][col] = 'area';
-    matrix[6][valueCol] = roundForExport(areaMm2, 4);
-    matrix[7][col] = maxLabel;
-    matrix[7][valueCol] = roundForExport(peakY, 4);
-    matrix[8][col] = 'displacement';
-    matrix[8][valueCol] = yHeader;
+    matrix[7][col] = 'area';
+    matrix[7][valueCol] = roundForExport(areaMm2, 4);
+    matrix[8][col] = maxLabel;
+    matrix[8][valueCol] = roundForExport(peakY, 4);
+    matrix[9][col] = 'displacement';
+    matrix[9][valueCol] = yHeader;
 
     test.samples.forEach((sample, sampleIndex) => {
       const row = dataStartRow + sampleIndex;
@@ -1848,6 +1926,7 @@ function buildStructuredXlsxSheet(tests) {
     merges.push({ s: { r: 0, c: col }, e: { r: 0, c: valueCol } });
     merges.push({ s: { r: 1, c: col }, e: { r: 1, c: valueCol } });
     merges.push({ s: { r: 2, c: col }, e: { r: 2, c: valueCol } });
+    merges.push({ s: { r: 3, c: col }, e: { r: 3, c: valueCol } });
   });
 
   const worksheet = window.XLSX.utils.aoa_to_sheet(matrix);
@@ -2168,7 +2247,7 @@ testTypeEl.addEventListener('change', () => {
   updateStartButtonState();
 });
 
-[speedInputEl, widthInputEl, heightInputEl, diameterInputEl, sampleNameEl].forEach(el => {
+[speedInputEl, widthInputEl, heightInputEl, diameterInputEl, sampleNameEl, sampleMaterialEl].forEach(el => {
   el.addEventListener('input', () => {
     renderSampleSummary();
     updateStartButtonState();

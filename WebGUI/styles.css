@@ -515,12 +515,25 @@ select.input {
 
 .series-row {
   display: grid;
-  grid-template-columns: auto 1fr auto;
+  grid-template-columns: auto 1fr auto auto;
   gap: 10px;
   align-items: center;
   background: #101a2c;
   border-radius: 10px;
   padding: 8px 10px;
+}
+
+.series-delete-btn {
+  height: 32px;
+  min-height: 32px;
+  font-size: 12px;
+  padding: 0 10px;
+  background: #55303a;
+  color: #ffdce3;
+}
+
+.series-delete-btn:hover {
+  background: #6a3946;
 }
 
 .series-row input[type="checkbox"] {
