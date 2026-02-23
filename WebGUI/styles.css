@@ -453,8 +453,106 @@ select.input {
   border: none;
   background: #101a2c;
   border-radius: 10px;
-  color: #a9bee8;
-  font-size: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-height: 40px;
+}
+
+.status-indicator-wrap {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.status-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  background: #86a3d6;
+  box-shadow: 0 0 0 2px rgba(134, 163, 214, 0.22);
+  flex: 0 0 auto;
+}
+
+.status-indicator {
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.3px;
+  color: #cddcff;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.status-detail {
+  margin-left: auto;
+  min-width: 0;
+  text-align: right;
+  color: #8fa8d6;
+  font-size: 13px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.status-line[data-state="ready"] .status-dot,
+.status-line[data-state="connected"] .status-dot {
+  background: #7fd3a2;
+  box-shadow: 0 0 0 2px rgba(127, 211, 162, 0.24);
+}
+
+.status-line[data-state="ready"] .status-indicator,
+.status-line[data-state="connected"] .status-indicator {
+  color: #bff1d3;
+}
+
+.status-line[data-state="pretension"] .status-dot,
+.status-line[data-state="moving-zero"] .status-dot,
+.status-line[data-state="taring"] .status-dot,
+.status-line[data-state="jogging"] .status-dot {
+  background: #79b7ff;
+  box-shadow: 0 0 0 2px rgba(121, 183, 255, 0.24);
+}
+
+.status-line[data-state="pretension"] .status-indicator,
+.status-line[data-state="moving-zero"] .status-indicator,
+.status-line[data-state="taring"] .status-indicator,
+.status-line[data-state="jogging"] .status-indicator {
+  color: #b7daff;
+}
+
+.status-line[data-state="testing"] .status-dot {
+  background: #ffd27d;
+  box-shadow: 0 0 0 2px rgba(255, 210, 125, 0.24);
+}
+
+.status-line[data-state="testing"] .status-indicator {
+  color: #ffe2a8;
+}
+
+.status-line[data-state="break-detected"] .status-dot {
+  background: #ff9f8f;
+  box-shadow: 0 0 0 2px rgba(255, 159, 143, 0.24);
+}
+
+.status-line[data-state="break-detected"] .status-indicator {
+  color: #ffd1c8;
+}
+
+.status-line[data-state="stopped"] .status-dot,
+.status-line[data-state="disconnected"] .status-dot,
+.status-line[data-state="warning"] .status-dot,
+.status-line[data-state="error"] .status-dot {
+  background: #ff8d8d;
+  box-shadow: 0 0 0 2px rgba(255, 141, 141, 0.24);
+}
+
+.status-line[data-state="stopped"] .status-indicator,
+.status-line[data-state="disconnected"] .status-indicator,
+.status-line[data-state="warning"] .status-indicator,
+.status-line[data-state="error"] .status-indicator {
+  color: #ffd0d0;
 }
 
 .serial-monitor {

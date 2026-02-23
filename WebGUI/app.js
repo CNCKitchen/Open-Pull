@@ -2,6 +2,8 @@ const connectBtn = document.getElementById('connectBtn');
 const emergencyStopBtn = document.getElementById('emergencyStopBtn');
 const connectionState = document.getElementById('connectionState');
 const statusLine = document.getElementById('statusLine');
+const statusIndicatorEl = document.getElementById('statusIndicator');
+const statusDetailEl = document.getElementById('statusDetail');
 const serialMonitorEl = document.getElementById('serialMonitor');
 
 const currentLoadEl = document.getElementById('currentLoad');
@@ -195,7 +197,61 @@ function resizeCanvasToDisplaySize() {
 }
 
 function setStatus(text) {
-  statusLine.textContent = `STATUS: ${text}`;
+  const detailText = String(text ?? '').trim() || '-';
+  if (statusDetailEl) {
+    statusDetailEl.textContent = detailText;
+    return;
+  }
+  statusLine.textContent = `STATUS: ${detailText}`;
+}
+
+const STATUS_INDICATOR_LABELS = {
+  ready: 'READY',
+  connected: 'CONNECTED',
+  disconnected: 'DISCONNECTED',
+  pretension: 'PRETENSION',
+  'moving-zero': 'MOVING TO ZERO',
+  testing: 'TESTING',
+  'break-detected': 'BREAK DETECTED',
+  stopped: 'TEST STOPPED',
+  taring: 'TARING',
+  jogging: 'JOGGING',
+  warning: 'WARNING',
+  error: 'ERROR'
+};
+
+function setStatusIndicator(stateKey) {
+  const normalizedState = STATUS_INDICATOR_LABELS[stateKey] ? stateKey : 'ready';
+  if (statusLine) {
+    statusLine.dataset.state = normalizedState;
+  }
+  if (statusIndicatorEl) {
+    statusIndicatorEl.textContent = STATUS_INDICATOR_LABELS[normalizedState];
+  }
+}
+
+function updateIndicatorFromMode(mode) {
+  if (mode === 1 || mode === 3 || mode === 4) {
+    setStatusIndicator('testing');
+    return;
+  }
+  if (mode === 5) {
+    setStatusIndicator('moving-zero');
+    return;
+  }
+  if (mode === 6) {
+    setStatusIndicator('jogging');
+    return;
+  }
+
+  if (mode === MANUAL_MODE_VALUE) {
+    const activeTest = getActiveTest();
+    if (isRunningTest(activeTest)) {
+      setStatusIndicator('testing');
+    } else {
+      setStatusIndicator(serialWriter ? 'connected' : 'ready');
+    }
+  }
 }
 
 function getConfigComparableValue(inputEl) {
@@ -1624,6 +1680,13 @@ function markActiveTestFinished(reason) {
   }
   seriesState.activeTestId = null;
   seriesState.readyForStart = false;
+  if (reason === 'break_detected') {
+    setStatusIndicator('break-detected');
+  } else if (reason === 'manual_stopped' || reason === 'failed' || reason === 'aborted') {
+    setStatusIndicator('stopped');
+  } else {
+    setStatusIndicator(serialWriter ? 'connected' : 'ready');
+  }
   schedulePersistState();
   refreshUi();
 }
@@ -1803,6 +1866,7 @@ function parseLine(line) {
       setStatus('test_finished_press_new_test');
     }
 
+    updateIndicatorFromMode(mode);
     lastIncomingMode = mode;
     return;
   }
@@ -1813,16 +1877,35 @@ function parseLine(line) {
     setStatus(`${code} ${message}`);
 
     if (code === 'BOOT') {
+      setStatusIndicator('ready');
       scheduleMachineConfigSync();
     }
 
     if (code === 'ABORT') {
+      setStatusIndicator('stopped');
       markActiveTestFinished(message === 'emergency_stop' ? 'failed' : 'manual_stopped');
     }
 
     if (code === 'DONE' && message === 'specimen_break_detected') {
+      setStatusIndicator('break-detected');
       scheduleBreakTailFinalize();
       setStatus('break_detected_capturing_tail_samples');
+    }
+
+    if (code === 'DONE' && message === 'at_zero') {
+      setStatusIndicator('ready');
+    }
+
+    if (code === 'ERR') {
+      setStatusIndicator('error');
+    }
+
+    if (code === 'MODE' && message === 'slow_test_break_detected_speedup') {
+      setStatusIndicator('testing');
+    }
+
+    if (code === 'AUTO' && message === 'tare_after_break_done') {
+      setStatusIndicator(serialWriter ? 'connected' : 'ready');
     }
     return;
   }
@@ -1847,6 +1930,7 @@ function parseLine(line) {
       if (isRunningTest(activeTest)) {
         markActiveTestFinished('manual_stopped');
       }
+      setStatusIndicator('stopped');
       lastIncomingMode = MANUAL_MODE_VALUE;
     }
 
@@ -1855,7 +1939,28 @@ function parseLine(line) {
       if (isRunningTest(activeTest)) {
         markActiveTestFinished('failed');
       }
+      setStatusIndicator('stopped');
       lastIncomingMode = MANUAL_MODE_VALUE;
+    }
+
+    if (command === 'M10') {
+      if (message.includes('pending_preload')) {
+        setStatusIndicator('pretension');
+      } else {
+        setStatusIndicator('testing');
+      }
+    }
+
+    if (command === 'M12') {
+      setStatusIndicator('taring');
+    }
+
+    if (command === 'M21') {
+      setStatusIndicator('moving-zero');
+    }
+
+    if (command === 'M22') {
+      setStatusIndicator('jogging');
     }
     return;
   }
@@ -1901,6 +2006,7 @@ async function readSerialLoop() {
 
 async function connectSerial() {
   if (!('serial' in navigator)) {
+    setStatusIndicator('error');
     setStatus('Web Serial not supported in this browser');
     return;
   }
@@ -1919,11 +2025,13 @@ async function connectSerial() {
 
     connectBtn.textContent = 'Disconnect';
     setConnectionBadge(true);
+    setStatusIndicator('connected');
     setStatus('connected');
     appendSerialMonitorLine('[port] connected');
     readSerialLoop();
     scheduleMachineConfigSync();
   } catch (error) {
+    setStatusIndicator('error');
     appendSerialMonitorLine(`[connect_error] ${error.message}`);
     setStatus(`connect_error ${error.message}`);
   }
@@ -1977,6 +2085,7 @@ async function disconnectSerial() {
   connectBtn.textContent = 'Connect';
   clearGainUiUnlock();
   setConnectionBadge(false);
+  setStatusIndicator('disconnected');
   updateStartButtonState();
   appendSerialMonitorLine('[port] disconnected');
   setStatus('disconnected');
@@ -1984,6 +2093,7 @@ async function disconnectSerial() {
 
 async function sendCommand(command) {
   if (!serialWriter) {
+    setStatusIndicator('disconnected');
     setStatus('not_connected');
     return;
   }
@@ -1997,9 +2107,9 @@ async function sendRelativeMoveMm(deltaMm) {
   await sendCommand(`M22 ${deltaMm.toFixed(3)}`);
 }
 
-function getSeriesExportRows() {
+function getSeriesExportRows(sourceTests = seriesState.tests) {
   const rows = [];
-  seriesState.tests.forEach((test, index) => {
+  sourceTests.forEach((test, index) => {
     const samples = test.samples;
     if (samples.length === 0) {
       return;
@@ -2068,6 +2178,44 @@ function getSeriesExportHeader() {
     'mode',
     'speed_steps_per_s'
   ];
+}
+
+function getSummaryExportHeader() {
+  return [
+    'id',
+    'name',
+    'type',
+    'material',
+    'comment',
+    'max_load_N',
+    'max_stress_MPa',
+    'sample_points'
+  ];
+}
+
+function getSummaryExportRows(tests) {
+  return tests.map((test, index) => {
+    const seriesNumber = getSeriesNumber(test, index);
+    const sampleName = sanitizeSpreadsheetText(test.meta?.sampleName || '');
+    const testType = sanitizeSpreadsheetText(test.meta?.testType || '');
+    const sampleMaterial = sanitizeSpreadsheetText(test.meta?.sampleMaterial || '');
+    const sampleComment = sanitizeSpreadsheetText(test.meta?.sampleComment || '');
+    const maxLoad = roundForExport(getTestMaxLoad(test), 4);
+    const maxStressValue = getTestMaxStress(test);
+    const maxStress = Number.isFinite(maxStressValue) ? roundForExport(maxStressValue, 4) : '';
+    const samplePoints = Array.isArray(test.samples) ? test.samples.length : 0;
+
+    return [
+      seriesNumber,
+      sampleName,
+      testType,
+      sampleMaterial,
+      sampleComment,
+      maxLoad,
+      maxStress,
+      samplePoints
+    ];
+  });
 }
 
 function getExportStamp() {
@@ -2149,6 +2297,22 @@ function buildConfigurationSheet() {
   const rows = getConfigurationExportRows();
   const worksheet = window.XLSX.utils.aoa_to_sheet(rows);
   worksheet['!cols'] = [{ wch: 30 }, { wch: 24 }];
+  return worksheet;
+}
+
+function buildSummarySheet(tests) {
+  const rows = getSummaryExportRows(tests);
+  const worksheet = window.XLSX.utils.aoa_to_sheet([getSummaryExportHeader(), ...rows]);
+  worksheet['!cols'] = [
+    { wch: 8 },
+    { wch: 20 },
+    { wch: 14 },
+    { wch: 16 },
+    { wch: 28 },
+    { wch: 14 },
+    { wch: 16 },
+    { wch: 14 }
+  ];
   return worksheet;
 }
 
@@ -2294,8 +2458,10 @@ function exportSeriesCleanXlsx() {
 
   const workbook = window.XLSX.utils.book_new();
   const cleanWorksheet = buildStructuredXlsxSheet(tests);
+  const summaryWorksheet = buildSummarySheet(tests);
   const configWorksheet = buildConfigurationSheet();
   window.XLSX.utils.book_append_sheet(workbook, cleanWorksheet, 'Clean Export');
+  window.XLSX.utils.book_append_sheet(workbook, summaryWorksheet, 'Summary');
   window.XLSX.utils.book_append_sheet(workbook, configWorksheet, 'Configuration');
   downloadWorkbook(workbook, 'clean');
   setStatus('series_clean_xlsx_exported');
@@ -2319,8 +2485,10 @@ function exportSeriesSelectedCleanXlsx() {
 
   const workbook = window.XLSX.utils.book_new();
   const cleanWorksheet = buildStructuredXlsxSheet(tests);
+  const summaryWorksheet = buildSummarySheet(tests);
   const configWorksheet = buildConfigurationSheet();
   window.XLSX.utils.book_append_sheet(workbook, cleanWorksheet, 'Clean Export');
+  window.XLSX.utils.book_append_sheet(workbook, summaryWorksheet, 'Summary');
   window.XLSX.utils.book_append_sheet(workbook, configWorksheet, 'Configuration');
   downloadWorkbook(workbook, 'selected');
   setStatus('series_selected_xlsx_exported');
@@ -2332,8 +2500,9 @@ function exportSeriesFullXlsx() {
     return;
   }
 
-  const rows = getSeriesExportRows();
-  if (rows.length === 0) {
+  const tests = getOrderedExportTestsWithSamples();
+  const rows = getSeriesExportRows(tests);
+  if (rows.length === 0 || tests.length === 0) {
     setStatus('no_data_to_export');
     return;
   }
@@ -2344,9 +2513,11 @@ function exportSeriesFullXlsx() {
 
   const header = getSeriesExportHeader();
   const fullWorksheet = window.XLSX.utils.aoa_to_sheet([header, ...rows]);
+  const summaryWorksheet = buildSummarySheet(tests);
   const configWorksheet = buildConfigurationSheet();
   const workbook = window.XLSX.utils.book_new();
   window.XLSX.utils.book_append_sheet(workbook, fullWorksheet, 'Full Export');
+  window.XLSX.utils.book_append_sheet(workbook, summaryWorksheet, 'Summary');
   window.XLSX.utils.book_append_sheet(workbook, configWorksheet, 'Configuration');
   downloadWorkbook(workbook, 'full');
   setStatus('series_full_xlsx_exported');
@@ -2675,6 +2846,7 @@ restoreStateFromStorage();
 updateSeriesSortHeader();
 applyChartPreferenceControls();
 setConnectionBadge(false);
+setStatusIndicator('ready');
 applyTestTypeUiState();
 renderSampleSummary();
 refreshUi();

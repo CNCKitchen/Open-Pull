@@ -157,7 +157,13 @@
           </div>
         </div>
 
-        <div class="status-line" id="statusLine">STATUS: ready</div>
+        <div class="status-line" id="statusLine" data-state="ready">
+          <div class="status-indicator-wrap">
+            <span class="status-dot" aria-hidden="true"></span>
+            <span class="status-indicator" id="statusIndicator">READY</span>
+          </div>
+          <div class="status-detail" id="statusDetail">ready</div>
+        </div>
         <div class="serial-monitor" id="serialMonitor"></div>
       </section>
     </main>
